@@ -529,7 +529,7 @@ function HyakuAsura.init(_context)
 				end
 
 				local targetName = entityModel and entityModel.Name or (LocalPlayer and LocalPlayer.Name) or "LocalPlayer"
-				statsStatusLabel:SetText(string.format("Target: workspace.Entities.%s.MainScript.Stats", tostring(targetName)))
+				statsStatusLabel:SetText(string.format("workspace.Entities.%s.MainScript.Stats", tostring(targetName)))
 				return
 			end
 
@@ -546,7 +546,7 @@ function HyakuAsura.init(_context)
 				end
 			end
 
-			statsStatusLabel:SetText(string.format("Target: workspace.Entities.%s.MainScript.Stats", statsFolder.Parent and statsFolder.Parent.Parent and statsFolder.Parent.Parent.Name or ((LocalPlayer and LocalPlayer.Name) or "LocalPlayer")))
+			statsStatusLabel:SetText(string.format("workspace.Entities.%s.MainScript.Stats", statsFolder.Parent and statsFolder.Parent.Parent and statsFolder.Parent.Parent.Name or ((LocalPlayer and LocalPlayer.Name) or "LocalPlayer")))
 		end
 
 		for _, statName in ipairs(trackedStats) do
