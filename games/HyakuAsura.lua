@@ -24,7 +24,7 @@ local HUAJ_HUB_HYAKU_ESP_DRAWINGS_KEY = "__huaj_hub_hyaku_esp_drawings_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_HOOK_KEY = "__huaj_hub_hyaku_remote_block_hook_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_CALLBACK_KEY = "__huaj_hub_hyaku_remote_block_callback_v1"
 local HYAKU_RHYTHM_REMOTE_INTERVAL = 0.03
-local HYAKU_PROMPT_NIL_SCAN_INTERVAL = 0.8
+local HYAKU_PROMPT_NIL_SCAN_INTERVAL = 0.12
 
 local LocalPlayer = Players.LocalPlayer
 local maid = Maid.new()
@@ -670,6 +670,12 @@ function HyakuAsura.init(_context)
 		end
 
 		local function getBenchPromptLabel()
+			local promptFrame = getBenchPromptFrame()
+			if not promptFrame then
+				cachedBenchPromptLabel = nil
+				return nil
+			end
+
 			if cachedBenchPromptLabel then
 				local okClassName, className = pcall(function()
 					return cachedBenchPromptLabel.ClassName
@@ -680,23 +686,9 @@ function HyakuAsura.init(_context)
 				cachedBenchPromptLabel = nil
 			end
 
-			local promptFrame = getBenchPromptFrame()
-			if not promptFrame then
-				return nil
-			end
-
-			local ok, descendants = pcall(function()
-				return promptFrame:GetDescendants()
-			end)
-			if not ok or type(descendants) ~= "table" then
-				return nil
-			end
-
-			for _, instance in ipairs(descendants) do
-				if instance and instance.Name == "TextLabel" and getPromptLabelKey(instance) then
-					cachedBenchPromptLabel = instance
-					return instance
-				end
+			cachedBenchPromptLabel = findNilInstanceByNameAndClass("TextLabel", "TextLabel")
+			if cachedBenchPromptLabel then
+				return cachedBenchPromptLabel
 			end
 
 			return nil
