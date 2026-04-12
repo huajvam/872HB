@@ -1313,6 +1313,12 @@ function HyakuAsura.init(_context)
 
 							if character and bedModel and bedRemote then
 								autoSleepInProgress = true
+								if activeTrainingPromptRemote then
+									pcall(function()
+										activeTrainingPromptRemote:FireServer("Leave")
+									end)
+									task.wait(0.2)
+								end
 								disconnectTrainingPromptListeners()
 								teleportCharacterToTrainingSpot(character, bedModel)
 								task.wait(0.35)
