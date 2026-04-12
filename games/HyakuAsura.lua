@@ -24,6 +24,8 @@ local HUAJ_HUB_HYAKU_ESP_DRAWINGS_KEY = "__huaj_hub_hyaku_esp_drawings_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_HOOK_KEY = "__huaj_hub_hyaku_remote_block_hook_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_CALLBACK_KEY = "__huaj_hub_hyaku_remote_block_callback_v1"
 local HYAKU_RHYTHM_REMOTE_INTERVAL = 0.03
+local HYAKU_PROMPT_GUI_SCAN_INTERVAL = 0.2
+local HYAKU_PROMPT_NIL_SCAN_INTERVAL = 0.35
 
 local LocalPlayer = Players.LocalPlayer
 local maid = Maid.new()
@@ -314,6 +316,8 @@ function HyakuAsura.init(_context)
 		local autoPullUpToken = 0
 		local cachedBenchPromptLabel = nil
 		local lastBenchVisibleKey = nil
+		local lastBenchPromptGuiScanAt = 0
+		local lastBenchPromptNilScanAt = 0
 		local rhythmChargeConnection
 		local staminaConnection
 
@@ -602,23 +606,49 @@ function HyakuAsura.init(_context)
 			return nil
 		end
 
-		local function getBenchPromptLabel()
-			if cachedBenchPromptLabel and cachedBenchPromptLabel.Parent then
-				local cachedText = normalizeBenchPromptText(cachedBenchPromptLabel.Text)
-				if cachedText then
-					return cachedBenchPromptLabel
-				end
+		local function getPromptLabelKey(instance)
+			if not instance then
+				return nil
 			end
 
+			local okClassName, className = pcall(function()
+				return instance.ClassName
+			end)
+			if not okClassName or className ~= "TextLabel" then
+				return nil
+			end
+
+			local okText, text = pcall(function()
+				return instance.Text
+			end)
+			if not okText then
+				return nil
+			end
+
+			return normalizeBenchPromptText(text)
+		end
+
+		local function getBenchPromptLabel()
+			if cachedBenchPromptLabel and getPromptLabelKey(cachedBenchPromptLabel) then
+				return cachedBenchPromptLabel
+			end
+
+			local now = os.clock()
 			local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
-			if playerGui then
+			if playerGui and (now - lastBenchPromptGuiScanAt) >= HYAKU_PROMPT_GUI_SCAN_INTERVAL then
+				lastBenchPromptGuiScanAt = now
 				for _, instance in ipairs(playerGui:GetDescendants()) do
-					if instance:IsA("TextLabel") and normalizeBenchPromptText(instance.Text) then
+					if getPromptLabelKey(instance) then
 						cachedBenchPromptLabel = instance
 						return instance
 					end
 				end
 			end
+
+			if (now - lastBenchPromptNilScanAt) < HYAKU_PROMPT_NIL_SCAN_INTERVAL then
+				return nil
+			end
+			lastBenchPromptNilScanAt = now
 
 			if type(getnilinstances) ~= "function" then
 				return nil
@@ -633,8 +663,9 @@ function HyakuAsura.init(_context)
 
 			for _, instance in next, instances do
 				if instance
+					and instance.Name == "TextLabel"
 					and instance.ClassName == "TextLabel"
-					and normalizeBenchPromptText(instance.Text)
+					and getPromptLabelKey(instance)
 				then
 					cachedBenchPromptLabel = instance
 					return instance
@@ -650,8 +681,7 @@ function HyakuAsura.init(_context)
 				return nil
 			end
 
-			local text = normalizeBenchPromptText(promptLabel.Text)
-			return text
+			return getPromptLabelKey(promptLabel)
 		end
 
 		local function pressBenchPromptKey(key)
