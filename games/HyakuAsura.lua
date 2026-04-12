@@ -312,8 +312,7 @@ function HyakuAsura.init(_context)
 		local infiniteRhythmLoopToken = 0
 		local autoBenchToken = 0
 		local cachedBenchPromptLabel = nil
-		local lastBenchPromptKey = nil
-		local lastBenchPromptAt = 0
+		local lastBenchVisibleKey = nil
 		local rhythmChargeConnection
 		local staminaConnection
 
@@ -643,20 +642,11 @@ function HyakuAsura.init(_context)
 		local function getBenchPromptKey()
 			local promptLabel = getBenchPromptLabel()
 			if not promptLabel then
-				if os.clock() - lastBenchPromptAt <= 0.25 then
-					return lastBenchPromptKey
-				end
 				return nil
 			end
 
 			local text = normalizeBenchPromptText(promptLabel.Text)
-			if text then
-				lastBenchPromptKey = text
-				lastBenchPromptAt = os.clock()
-				return text
-			end
-
-			return nil
+			return text
 		end
 
 		local function pressBenchPromptKey(key)
@@ -725,9 +715,15 @@ function HyakuAsura.init(_context)
 							do
 								local promptedKey = getBenchPromptKey()
 								if promptedKey then
-									pressBenchPromptKey(promptedKey)
-									task.wait(0.04)
+									if promptedKey ~= lastBenchVisibleKey then
+										lastBenchVisibleKey = promptedKey
+										pressBenchPromptKey(promptedKey)
+										task.wait(0.04)
+									else
+										task.wait(0.02)
+									end
 								else
+									lastBenchVisibleKey = nil
 									task.wait(0.05)
 								end
 							end
