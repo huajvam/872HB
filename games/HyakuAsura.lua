@@ -459,6 +459,11 @@ function HyakuAsura.init(_context)
 				return directModel
 			end
 
+			local nestedModel = benchFolder:FindFirstChildWhichIsA("Model", true)
+			if nestedModel then
+				return nestedModel
+			end
+
 			local anyPart = benchFolder:FindFirstChildWhichIsA("BasePart", true)
 			if anyPart then
 				return anyPart.Parent
@@ -478,6 +483,30 @@ function HyakuAsura.init(_context)
 			return nil
 		end
 
+		local function teleportCharacterToBench(character, benchModel)
+			if not character or not benchModel then
+				return false
+			end
+
+			local targetCFrame = benchModel:GetPivot() * CFrame.new(0, 2, 0)
+			local root = getCharacterRoot(character)
+
+			if root then
+				pcall(function()
+					root.AssemblyLinearVelocity = Vector3.zero
+				end)
+				pcall(function()
+					root.CFrame = targetCFrame
+				end)
+				return true
+			end
+
+			local ok = pcall(function()
+				character:PivotTo(targetCFrame)
+			end)
+			return ok
+		end
+
 		local function startAutoBench()
 			autoBenchToken += 1
 			local currentToken = autoBenchToken
@@ -485,15 +514,15 @@ function HyakuAsura.init(_context)
 			task.spawn(function()
 				while currentToken == autoBenchToken and Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value do
 					local benchFolder = getBenchFolder()
-					local root = getCharacterRoot(LocalPlayer.Character)
+					local character = LocalPlayer and LocalPlayer.Character
 					
-					if benchFolder and root then
+					if benchFolder and character then
 						local benchModel = getBenchTeleportModel(benchFolder)
 						local benchRemote = getBenchRemote()
 						
 						if benchModel and benchRemote then
 							-- Stealth Teleport with micro-wait to settle physics
-							root.CFrame = benchModel:GetPivot() * CFrame.new(0, 2, 0)
+							teleportCharacterToBench(character, benchModel)
 							task.wait(0.35)
 							
 							-- Start Training Remote
