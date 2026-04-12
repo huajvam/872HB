@@ -511,9 +511,18 @@ function HyakuAsura.init(_context)
 							
 							-- WASD Spam Loop
 							local keys = {"W", "A", "S", "D"}
-							while currentToken == autoBenchToken and Toggles.AutoBenchEnabled.Value do
+							local benchEndAt = os.clock() + 60
+							while currentToken == autoBenchToken
+								and Toggles.AutoBenchEnabled.Value
+								and os.clock() < benchEndAt
+							do
 								for _, key in ipairs(keys) do
-									if not Toggles.AutoBenchEnabled.Value then break end
+									if not Toggles.AutoBenchEnabled.Value
+										or currentToken ~= autoBenchToken
+										or os.clock() >= benchEndAt
+									then
+										break
+									end
 									fireBenchKey(key)
 									task.wait(0.18)
 								end
