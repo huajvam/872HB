@@ -386,11 +386,13 @@ function HyakuAsura.init(_context)
 		}
 		local autoBagPlacementConfig = {
 			Axis = "LookVector",
-			DistanceOffset = 0.7,
+			DistanceOffset = 0.35,
 			VerticalOffset = 0.15,
+			SideOffset = 0,
+			BackOffset = 0,
 			UseBagAndPlayerDepth = true,
 			ManualDistance = 3.5,
-			YawOffsetDegrees = 90,
+			YawOffsetDegrees = 0,
 		}
 
 		local function getRhythmInputRemote()
@@ -1772,7 +1774,13 @@ function HyakuAsura.init(_context)
 				standDistance = math.max(bagDepth * 0.5, 0.5) + math.max(playerDepth * 0.5, 0.5) + (tonumber(autoBagPlacementConfig.DistanceOffset) or 0.35)
 			end
 
-			local targetPosition = bagPart.Position + (axisVector * standDistance) + Vector3.new(0, tonumber(autoBagPlacementConfig.VerticalOffset) or 0.15, 0)
+			local sideOffset = tonumber(autoBagPlacementConfig.SideOffset) or 0
+			local backOffset = tonumber(autoBagPlacementConfig.BackOffset) or 0
+			local verticalOffset = tonumber(autoBagPlacementConfig.VerticalOffset) or 0.15
+			local targetPosition = bagPart.Position
+				+ (axisVector * (standDistance + backOffset))
+				+ (bagPart.CFrame.RightVector * sideOffset)
+				+ Vector3.new(0, verticalOffset, 0)
 			local delta = bagPart.Position - targetPosition
 			local baseYaw = math.atan2(-delta.X, -delta.Z)
 			local yawOffsetRadians = math.rad(tonumber(autoBagPlacementConfig.YawOffsetDegrees) or 0)
