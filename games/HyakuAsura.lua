@@ -6,10 +6,11 @@ local Maid = sharedRequire("@utils/Maid.lua")
 local CharacterUtils = sharedRequire("@utils/CharacterUtils.lua")
 local EntityESP = sharedRequire("classes/EntityESP.lua")
 
-local Players, MarketplaceService, RunService = Services:Get(
+local Players, MarketplaceService, RunService, VirtualInputManager = Services:Get(
 	"Players",
 	"MarketplaceService",
-	"RunService"
+	"RunService",
+	"VirtualInputManager"
 )
 
 local Library = sharedRequire("ui/Linoria/Library.lua")
@@ -245,9 +246,9 @@ function HyakuAsura.init(_context)
 	}
 
 	do
-		local infoGroup = Tabs.Main:AddLeftGroupbox("Info")
-		local localCheatsGroup = Tabs.Main:AddRightGroupbox("Local Cheats")
+		local localCheatsGroup = Tabs.Main:AddLeftGroupbox("Local Cheats")
 		local infiniteRhythmLoopToken = 0
+		local autoBenchToken = 0
 		local rhythmChargeConnection
 		local staminaConnection
 
@@ -428,9 +429,74 @@ function HyakuAsura.init(_context)
 			fireInfiniteRhythmRemote(false)
 		end
 
-		infoGroup:AddLabel("Hyaku Asura scaffold loaded.")
-		infoGroup:AddLabel("ESP is available now.")
-		infoGroup:AddLabel("Game-specific features can be added later.")
+		-- Auto Bench Automation Module
+		local function getClosestBench()
+			local TRAINING_SPOTS = workspace:FindFirstChild("TrainingSpots")
+			if not TRAINING_SPOTS then return nil end
+			
+			local closest, dist = nil, math.huge
+			local root = getCharacterRoot(LocalPlayer.Character)
+			if not root then return nil end
+
+			for _, folder in ipairs(TRAINING_SPOTS:GetChildren()) do
+				if folder.Name == "Bench" then
+					local model = folder:FindFirstChildOfClass("Model")
+					local part = model and (model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart"))
+					if part then
+						local d = (root.Position - part.Position).Magnitude
+						if d < dist then
+							dist = d
+							closest = folder
+						end
+					end
+				end
+			end
+			return closest
+		end
+
+		local function startAutoBench()
+			autoBenchToken += 1
+			local currentToken = autoBenchToken
+			
+			task.spawn(function()
+				while currentToken == autoBenchToken and Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value do
+					local benchFolder = getClosestBench()
+					local root = getCharacterRoot(LocalPlayer.Character)
+					
+					if benchFolder and root then
+						local benchModel = benchFolder:FindFirstChildOfClass("Model")
+						local benchRemote = benchFolder:FindFirstChild("Radio", true) and benchFolder.Radio:FindFirstChild("Remote")
+						
+						if benchModel and benchRemote then
+							-- Stealth Teleport with micro-wait to settle physics
+							root.CFrame = benchModel:GetPivot() * CFrame.new(0, 2, 0)
+							task.wait(0.2)
+
+							-- Simulate "E" Interaction
+							if VirtualInputManager then
+								VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+								task.wait(0.3)
+								VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+							end
+							
+							-- Start Training Remote
+							benchRemote:FireServer("Start", { Macro = false })
+							
+							-- WASD Spam Loop
+							local keys = {"W", "A", "S", "D"}
+							while currentToken == autoBenchToken and Toggles.AutoBenchEnabled.Value do
+								for _, key in ipairs(keys) do
+									if not Toggles.AutoBenchEnabled.Value then break end
+									benchRemote:FireServer("PressKey", { Key = key })
+									task.wait(0.05) 
+								end
+							end
+						end
+					end
+					task.wait(1)
+				end
+			end)
+		end
 
 		localCheatsGroup:AddToggle("InfiniteRhythmEnabled", {
 			Text = "Infinite Rhythm",
@@ -462,24 +528,33 @@ function HyakuAsura.init(_context)
 			setSpeedBoostEnabled(enabled)
 		end)
 
+		localCheatsGroup:AddToggle("AutoBenchEnabled", {
+			Text = "Auto Bench",
+			Default = false,
+		}):OnChanged(function(enabled)
+			if enabled then
+				startAutoBench()
+			else
+				autoBenchToken += 1
+			end
+		end)
+
 		registerLibraryUnloadCallback(function()
 			stopInfiniteRhythmLoop()
 			stopInfiniteStaminaHook()
 			setSpeedBoostEnabled(false)
+			autoBenchToken += 1
 			if Toggles and Toggles.InfiniteRhythmEnabled then
-				pcall(function()
-					Toggles.InfiniteRhythmEnabled:SetValue(false)
-				end)
+				pcall(function() Toggles.InfiniteRhythmEnabled:SetValue(false) end)
 			end
 			if Toggles and Toggles.InfiniteStaminaEnabled then
-				pcall(function()
-					Toggles.InfiniteStaminaEnabled:SetValue(false)
-				end)
+				pcall(function() Toggles.InfiniteStaminaEnabled:SetValue(false) end)
 			end
 			if Toggles and Toggles.SpeedBoostEnabled then
-				pcall(function()
-					Toggles.SpeedBoostEnabled:SetValue(false)
-				end)
+				pcall(function() Toggles.SpeedBoostEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AutoBenchEnabled then
+				pcall(function() Toggles.AutoBenchEnabled:SetValue(false) end)
 			end
 		end)
 	end
@@ -663,26 +738,10 @@ function HyakuAsura.init(_context)
 
 			local projectedPoints = {}
 			local pointNames = {
-				"Head",
-				"UpperTorso",
-				"LowerTorso",
-				"LeftUpperArm",
-				"LeftLowerArm",
-				"LeftHand",
-				"RightUpperArm",
-				"RightLowerArm",
-				"RightHand",
-				"LeftUpperLeg",
-				"LeftLowerLeg",
-				"LeftFoot",
-				"RightUpperLeg",
-				"RightLowerLeg",
-				"RightFoot",
-				"Torso",
-				"Left Arm",
-				"Right Arm",
-				"Left Leg",
-				"Right Leg",
+				"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+				"RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg",
+				"LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot", "Torso", "Left Arm",
+				"Right Arm", "Left Leg", "Right Leg",
 			}
 
 			for _, partName in ipairs(pointNames) do
@@ -706,7 +765,7 @@ function HyakuAsura.init(_context)
 				{"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"}, {"UpperTorso", "RightUpperArm"},
 				{"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"}, {"LowerTorso", "LeftUpperLeg"},
 				{"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"}, {"LowerTorso", "RightUpperLeg"},
-				{"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}, {"Head", "Torso"},
+				{"RightUpperLeg", "RightLowerLeg"}, {"RightUpperLeg", "RightFoot"}, {"Head", "Torso"},
 				{"Torso", "Left Arm"}, {"Torso", "Right Arm"}, {"Torso", "Left Leg"}, {"Torso", "Right Leg"},
 			}
 
@@ -767,11 +826,7 @@ function HyakuAsura.init(_context)
 				Vector2.new(barWidth, barHeight),
 				Vector2.new(barX + 1, box.bottom - ((barHeight - 2) * healthRatio) - 1),
 				Vector2.new(barWidth - 2, math.max((barHeight - 2) * healthRatio, 1)),
-				Color3.fromRGB(
-					math.floor(255 * (1 - healthRatio)),
-					math.floor(255 * healthRatio),
-					90
-				),
+				Color3.fromRGB(math.floor(255 * (1 - healthRatio)), math.floor(255 * healthRatio), 90),
 				getToggleValue("EspShowHealthBar", true) and humanoid ~= nil
 			)
 
@@ -852,7 +907,7 @@ function HyakuAsura.init(_context)
 
 			if not drawingAvailable and not espDrawUnavailableNotified then
 				espDrawUnavailableNotified = true
-				Library:Notify("Drawing API is unavailable in this executor; overlay ESP cannot render.", 3)
+				Library:Notify("Drawing API unavailable.", 3)
 				return
 			end
 
@@ -861,63 +916,20 @@ function HyakuAsura.init(_context)
 		end
 
 		local function scheduleEspRefresh()
-			task.defer(function()
-				refreshEsp()
-			end)
+			task.defer(refreshEsp)
 		end
 
-		espGroup:AddToggle("PlayerEspEnabled", {
-			Text = "Player ESP",
-			Default = false,
-		})
-
-		espGroup:AddToggle("MobEspEnabled", {
-			Text = "Mob ESP",
-			Default = false,
-		})
-
-		espVisualGroup:AddToggle("EspShowNames", {
-			Text = "Show Names",
-			Default = true,
-		})
-
-		espVisualGroup:AddToggle("EspShowDistance", {
-			Text = "Show Distance",
-			Default = true,
-		})
-
-		espVisualGroup:AddToggle("EspShowHealthText", {
-			Text = "Show Health Text",
-			Default = false,
-		})
-
-		espVisualGroup:AddToggle("EspShowHealthBar", {
-			Text = "Show Health Bar",
-			Default = true,
-		})
-
-		espVisualGroup:AddToggle("EspShowBox", {
-			Text = "Box ESP",
-			Default = true,
-		})
-
-		espVisualGroup:AddToggle("EspShowSkeleton", {
-			Text = "Skeleton ESP",
-			Default = false,
-		})
-
-		espVisualGroup:AddToggle("EspShowTracers", {
-			Text = "Tracer Lines",
-			Default = true,
-		})
-
+		espGroup:AddToggle("PlayerEspEnabled", { Text = "Player ESP", Default = false })
+		espGroup:AddToggle("MobEspEnabled", { Text = "Mob ESP", Default = false })
+		espVisualGroup:AddToggle("EspShowNames", { Text = "Show Names", Default = true })
+		espVisualGroup:AddToggle("EspShowDistance", { Text = "Show Distance", Default = true })
+		espVisualGroup:AddToggle("EspShowHealthText", { Text = "Show Health Text", Default = false })
+		espVisualGroup:AddToggle("EspShowHealthBar", { Text = "Show Health Bar", Default = true })
+		espVisualGroup:AddToggle("EspShowBox", { Text = "Box ESP", Default = true })
+		espVisualGroup:AddToggle("EspShowSkeleton", { Text = "Skeleton ESP", Default = false })
+		espVisualGroup:AddToggle("EspShowTracers", { Text = "Tracer Lines", Default = true })
 		espVisualGroup:AddSlider("EspRenderDistance", {
-			Text = "Render Distance",
-			Default = 500,
-			Min = 10,
-			Max = 2000,
-			Rounding = 0,
-			Suffix = " studs",
+			Text = "Render Distance", Default = 500, Min = 10, Max = 2000, Rounding = 0, Suffix = " studs"
 		})
 
 		Toggles.PlayerEspEnabled:OnChanged(refreshEsp)
@@ -951,12 +963,6 @@ function HyakuAsura.init(_context)
 			maid:GiveTask(liveFolder.ChildRemoved:Connect(scheduleEspRefresh))
 		end
 
-		maid:GiveTask(workspace.ChildAdded:Connect(function(child)
-			if child.Name == "Live" then
-				scheduleEspRefresh()
-			end
-		end))
-
 		maid:GiveTask(RunService.Heartbeat:Connect(function()
 			if getToggleValue("PlayerEspEnabled", false) or getToggleValue("MobEspEnabled", false) then
 				refreshEsp()
@@ -965,16 +971,6 @@ function HyakuAsura.init(_context)
 
 		registerLibraryUnloadCallback(function()
 			espShuttingDown = true
-			pcall(function()
-				if Toggles.PlayerEspEnabled then
-					Toggles.PlayerEspEnabled:SetValue(false)
-				end
-			end)
-			pcall(function()
-				if Toggles.MobEspEnabled then
-					Toggles.MobEspEnabled:SetValue(false)
-				end
-			end)
 			forceClearEsp()
 		end)
 	end
@@ -989,9 +985,7 @@ function HyakuAsura.init(_context)
 		ThemeManager:ApplyToTab(Tabs.Settings)
 
 		local menuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
-		menuGroup:AddButton("Unload", function()
-			Library:Unload()
-		end)
+		menuGroup:AddButton("Unload", function() Library:Unload() end)
 	end
 
 	registerLibraryUnloadCallback(function()
