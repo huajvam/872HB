@@ -168,6 +168,42 @@ local function getOptionValue(key, default)
 	return default
 end
 
+local function getLocalEntityModel()
+	local entitiesFolder = workspace:FindFirstChild("Entities")
+	if not entitiesFolder or not LocalPlayer then
+		return nil
+	end
+
+	return entitiesFolder:FindFirstChild(LocalPlayer.Name)
+end
+
+local function getLocalEntityMainScript()
+	local entityModel = getLocalEntityModel()
+	if not entityModel then
+		return nil
+	end
+
+	return entityModel:FindFirstChild("MainScript")
+end
+
+local function getLocalEntityStatsFolder()
+	local mainScript = getLocalEntityMainScript()
+	if not mainScript then
+		return nil
+	end
+
+	return mainScript:FindFirstChild("Stats")
+end
+
+local function getLocalEntityAttributesFolder()
+	local mainScript = getLocalEntityMainScript()
+	if not mainScript then
+		return nil
+	end
+
+	return mainScript:FindFirstChild("Attributes")
+end
+
 function HyakuAsura.init(_context)
 	if GLOBAL_ENV[HUAJ_HUB_HYAKU_INIT_KEY] then
 		local existingLibrary = GLOBAL_ENV[HUAJ_HUB_HYAKU_LIBRARY_KEY]
@@ -204,6 +240,7 @@ function HyakuAsura.init(_context)
 	local Tabs = {
 		Main = Window:AddTab(gameTabName),
 		ESP = Window:AddTab("ESP"),
+		Stats = Window:AddTab("Stats"),
 		Settings = Window:AddTab("Settings"),
 	}
 
@@ -234,18 +271,7 @@ function HyakuAsura.init(_context)
 		end
 
 		local function getRhythmChargeValue()
-			local entitiesFolder = workspace:FindFirstChild("Entities")
-			if not entitiesFolder or not LocalPlayer then
-				return nil
-			end
-
-			local entityModel = entitiesFolder:FindFirstChild(LocalPlayer.Name)
-			if not entityModel then
-				return nil
-			end
-
-			local mainScript = entityModel:FindFirstChild("MainScript")
-			local statsFolder = mainScript and mainScript:FindFirstChild("Stats")
+			local statsFolder = getLocalEntityStatsFolder()
 			local rhythmCharge = statsFolder and statsFolder:FindFirstChild("RhythmCharge")
 			if rhythmCharge and rhythmCharge:IsA("NumberValue") then
 				return rhythmCharge
@@ -255,21 +281,20 @@ function HyakuAsura.init(_context)
 		end
 
 		local function getStaminaValue()
-			local entitiesFolder = workspace:FindFirstChild("Entities")
-			if not entitiesFolder or not LocalPlayer then
-				return nil
-			end
-
-			local entityModel = entitiesFolder:FindFirstChild(LocalPlayer.Name)
-			if not entityModel then
-				return nil
-			end
-
-			local mainScript = entityModel:FindFirstChild("MainScript")
-			local statsFolder = mainScript and mainScript:FindFirstChild("Stats")
+			local statsFolder = getLocalEntityStatsFolder()
 			local stamina = statsFolder and statsFolder:FindFirstChild("Stamina")
 			if stamina and stamina:IsA("NumberValue") then
 				return stamina
+			end
+
+			return nil
+		end
+
+		local function getSpeedBoostValue()
+			local attributesFolder = getLocalEntityAttributesFolder()
+			local speedBoost = attributesFolder and attributesFolder:FindFirstChild("SpeedIII")
+			if speedBoost and speedBoost:IsA("BoolValue") then
+				return speedBoost
 			end
 
 			return nil
@@ -330,6 +355,18 @@ function HyakuAsura.init(_context)
 					applyInfiniteStamina()
 				end
 			end)
+		end
+
+		local function setSpeedBoostEnabled(enabled)
+			local speedBoost = getSpeedBoostValue()
+			if not speedBoost then
+				return false
+			end
+
+			pcall(function()
+				speedBoost.Value = enabled == true
+			end)
+			return true
 		end
 
 		local function startInfiniteRhythmChargeHook()
@@ -418,9 +455,17 @@ function HyakuAsura.init(_context)
 			end
 		end)
 
+		localCheatsGroup:AddToggle("SpeedBoostEnabled", {
+			Text = "Speed Boost",
+			Default = false,
+		}):OnChanged(function(enabled)
+			setSpeedBoostEnabled(enabled)
+		end)
+
 		registerLibraryUnloadCallback(function()
 			stopInfiniteRhythmLoop()
 			stopInfiniteStaminaHook()
+			setSpeedBoostEnabled(false)
 			if Toggles and Toggles.InfiniteRhythmEnabled then
 				pcall(function()
 					Toggles.InfiniteRhythmEnabled:SetValue(false)
@@ -431,6 +476,98 @@ function HyakuAsura.init(_context)
 					Toggles.InfiniteStaminaEnabled:SetValue(false)
 				end)
 			end
+			if Toggles and Toggles.SpeedBoostEnabled then
+				pcall(function()
+					Toggles.SpeedBoostEnabled:SetValue(false)
+				end)
+			end
+		end)
+	end
+
+	do
+		local statsGroup = Tabs.Stats:AddLeftGroupbox("Stats")
+		local statsRefreshToken = 0
+		local trackedStats = {
+			"AttackSpeed",
+			"Agility",
+			"Fat",
+			"LowerMuscle",
+			"UpperMuscle",
+			"Strength",
+			"StaminaInStat",
+			"TotalPower",
+		}
+		local statsLabels = {}
+		local statsStatusLabel = statsGroup:AddLabel("Waiting for local stats...", true)
+
+		local function formatStatNumber(value)
+			local numericValue = tonumber(value)
+			if not numericValue then
+				return "N/A"
+			end
+
+			if math.abs(numericValue - math.floor(numericValue + 0.5)) < 0.001 then
+				return tostring(math.floor(numericValue + 0.5))
+			end
+
+			local formatted = string.format("%.2f", numericValue)
+			formatted = formatted:gsub("(%..-)0+$", "%1")
+			formatted = formatted:gsub("%.$", "")
+			return formatted
+		end
+
+		local function refreshStatsTab()
+			local statsFolder = getLocalEntityStatsFolder()
+			local entityModel = getLocalEntityModel()
+
+			if not statsFolder then
+				for _, statName in ipairs(trackedStats) do
+					local label = statsLabels[statName]
+					if label then
+						label:SetText(string.format("%s: N/A", statName))
+					end
+				end
+
+				local targetName = entityModel and entityModel.Name or (LocalPlayer and LocalPlayer.Name) or "LocalPlayer"
+				statsStatusLabel:SetText(string.format("Target: workspace.Entities.%s.MainScript.Stats", tostring(targetName)))
+				return
+			end
+
+			for _, statName in ipairs(trackedStats) do
+				local statValue = statsFolder:FindFirstChild(statName)
+				local displayValue = "N/A"
+				if statValue and statValue:IsA("NumberValue") then
+					displayValue = formatStatNumber(statValue.Value)
+				end
+
+				local label = statsLabels[statName]
+				if label then
+					label:SetText(string.format("%s: %s", statName, displayValue))
+				end
+			end
+
+			statsStatusLabel:SetText(string.format("Target: workspace.Entities.%s.MainScript.Stats", statsFolder.Parent and statsFolder.Parent.Parent and statsFolder.Parent.Parent.Name or ((LocalPlayer and LocalPlayer.Name) or "LocalPlayer")))
+		end
+
+		for _, statName in ipairs(trackedStats) do
+			statsLabels[statName] = statsGroup:AddLabel(string.format("%s: N/A", statName))
+		end
+
+		local function startStatsRefreshLoop()
+			statsRefreshToken += 1
+			local currentToken = statsRefreshToken
+			task.spawn(function()
+				while currentToken == statsRefreshToken do
+					refreshStatsTab()
+					task.wait(0.2)
+				end
+			end)
+		end
+
+		startStatsRefreshLoop()
+
+		registerLibraryUnloadCallback(function()
+			statsRefreshToken += 1
 		end)
 	end
 
