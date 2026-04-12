@@ -498,7 +498,6 @@ function HyakuAsura.init(_context)
 			"TotalPower",
 		}
 		local statsLabels = {}
-		local statsStatusLabel = statsGroup:AddLabel("Waiting for local stats...", true)
 
 		local function formatStatNumber(value)
 			local numericValue = tonumber(value)
@@ -518,7 +517,6 @@ function HyakuAsura.init(_context)
 
 		local function refreshStatsTab()
 			local statsFolder = getLocalEntityStatsFolder()
-			local entityModel = getLocalEntityModel()
 
 			if not statsFolder then
 				for _, statName in ipairs(trackedStats) do
@@ -527,9 +525,6 @@ function HyakuAsura.init(_context)
 						label:SetText(string.format("%s: N/A", statName))
 					end
 				end
-
-				local targetName = entityModel and entityModel.Name or (LocalPlayer and LocalPlayer.Name) or "LocalPlayer"
-				statsStatusLabel:SetText(string.format("workspace.Entities.%s.MainScript.Stats", tostring(targetName)))
 				return
 			end
 
@@ -545,8 +540,6 @@ function HyakuAsura.init(_context)
 					label:SetText(string.format("%s: %s", statName, displayValue))
 				end
 			end
-
-			statsStatusLabel:SetText(string.format("workspace.Entities.%s.MainScript.Stats", statsFolder.Parent and statsFolder.Parent.Parent and statsFolder.Parent.Parent.Name or ((LocalPlayer and LocalPlayer.Name) or "LocalPlayer")))
 		end
 
 		for _, statName in ipairs(trackedStats) do
