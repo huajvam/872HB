@@ -24,8 +24,7 @@ local HUAJ_HUB_HYAKU_ESP_DRAWINGS_KEY = "__huaj_hub_hyaku_esp_drawings_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_HOOK_KEY = "__huaj_hub_hyaku_remote_block_hook_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_CALLBACK_KEY = "__huaj_hub_hyaku_remote_block_callback_v1"
 local HYAKU_RHYTHM_REMOTE_INTERVAL = 0.03
-local HYAKU_PROMPT_GUI_SCAN_INTERVAL = 0.2
-local HYAKU_PROMPT_NIL_SCAN_INTERVAL = 0.35
+local HYAKU_PROMPT_NIL_SCAN_INTERVAL = 0.8
 
 local LocalPlayer = Players.LocalPlayer
 local maid = Maid.new()
@@ -314,9 +313,9 @@ function HyakuAsura.init(_context)
 		local infiniteRhythmLoopToken = 0
 		local autoBenchToken = 0
 		local autoPullUpToken = 0
+		local cachedBenchPromptFrame = nil
 		local cachedBenchPromptLabel = nil
 		local lastBenchVisibleKey = nil
-		local lastBenchPromptGuiScanAt = 0
 		local lastBenchPromptNilScanAt = 0
 		local rhythmChargeConnection
 		local staminaConnection
@@ -628,28 +627,7 @@ function HyakuAsura.init(_context)
 			return normalizeBenchPromptText(text)
 		end
 
-		local function getBenchPromptLabel()
-			if cachedBenchPromptLabel and getPromptLabelKey(cachedBenchPromptLabel) then
-				return cachedBenchPromptLabel
-			end
-
-			local now = os.clock()
-			local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
-			if playerGui and (now - lastBenchPromptGuiScanAt) >= HYAKU_PROMPT_GUI_SCAN_INTERVAL then
-				lastBenchPromptGuiScanAt = now
-				for _, instance in ipairs(playerGui:GetDescendants()) do
-					if getPromptLabelKey(instance) then
-						cachedBenchPromptLabel = instance
-						return instance
-					end
-				end
-			end
-
-			if (now - lastBenchPromptNilScanAt) < HYAKU_PROMPT_NIL_SCAN_INTERVAL then
-				return nil
-			end
-			lastBenchPromptNilScanAt = now
-
+		local function findNilInstanceByNameAndClass(name, className)
 			if type(getnilinstances) ~= "function" then
 				return nil
 			end
@@ -662,11 +640,60 @@ function HyakuAsura.init(_context)
 			end
 
 			for _, instance in next, instances do
-				if instance
-					and instance.Name == "TextLabel"
-					and instance.ClassName == "TextLabel"
-					and getPromptLabelKey(instance)
-				then
+				if instance and instance.Name == name and instance.ClassName == className then
+					return instance
+				end
+			end
+
+			return nil
+		end
+
+		local function getBenchPromptFrame()
+			if cachedBenchPromptFrame then
+				local okClassName, className = pcall(function()
+					return cachedBenchPromptFrame.ClassName
+				end)
+				if okClassName and className == "Frame" then
+					return cachedBenchPromptFrame
+				end
+				cachedBenchPromptFrame = nil
+			end
+
+			local now = os.clock()
+			if (now - lastBenchPromptNilScanAt) < HYAKU_PROMPT_NIL_SCAN_INTERVAL then
+				return nil
+			end
+			lastBenchPromptNilScanAt = now
+
+			cachedBenchPromptFrame = findNilInstanceByNameAndClass("KeyMinigame", "Frame")
+			return cachedBenchPromptFrame
+		end
+
+		local function getBenchPromptLabel()
+			if cachedBenchPromptLabel then
+				local okClassName, className = pcall(function()
+					return cachedBenchPromptLabel.ClassName
+				end)
+				if okClassName and className == "TextLabel" then
+					return cachedBenchPromptLabel
+				end
+				cachedBenchPromptLabel = nil
+			end
+
+			local promptFrame = getBenchPromptFrame()
+			if not promptFrame then
+				return nil
+			end
+
+			local ok, descendants = pcall(function()
+				return promptFrame:GetDescendants()
+			end)
+			if not ok or type(descendants) ~= "table" then
+				return nil
+			end
+
+			for _, instance in ipairs(descendants) do
+				if instance and instance.Name == "TextLabel" and getPromptLabelKey(instance) then
 					cachedBenchPromptLabel = instance
 					return instance
 				end
