@@ -43,5 +43,5 @@ This structure follows the Aztup Hub pattern for scalability.
 ## Current Loadstring
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huajvam/HuajHub/main/source.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huajvam/872HB/main/source.lua"))()
 ```
