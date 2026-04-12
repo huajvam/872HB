@@ -761,13 +761,9 @@ function HyakuAsura.init(_context)
 			end
 
 			if cachedBenchPromptLabel then
-				local okClassName, className = pcall(function()
-					return cachedBenchPromptLabel.ClassName
-				end)
-				if okClassName and className == "TextLabel" then
+				if getPromptLabelKey(cachedBenchPromptLabel) then
 					return cachedBenchPromptLabel
 				end
-				cachedBenchPromptLabel = nil
 			end
 
 			local okDescendants, descendants = pcall(function()
@@ -775,22 +771,14 @@ function HyakuAsura.init(_context)
 			end)
 			if okDescendants and type(descendants) == "table" then
 				for _, instance in ipairs(descendants) do
-					if instance and instance.Name == "TextLabel" then
-						local okClassName, className = pcall(function()
-							return instance.ClassName
-						end)
-						if okClassName and className == "TextLabel" then
-							cachedBenchPromptLabel = instance
-							return cachedBenchPromptLabel
-						end
+					if instance and instance.Name == "TextLabel" and getPromptLabelKey(instance) then
+						cachedBenchPromptLabel = instance
+						return cachedBenchPromptLabel
 					end
 				end
 
 				for _, instance in ipairs(descendants) do
-					local okClassName, className = pcall(function()
-						return instance.ClassName
-					end)
-					if okClassName and className == "TextLabel" then
+					if getPromptLabelKey(instance) then
 						cachedBenchPromptLabel = instance
 						return cachedBenchPromptLabel
 					end
@@ -801,10 +789,12 @@ function HyakuAsura.init(_context)
 			if scannedFrame then
 				cachedBenchPromptFrame = scannedFrame
 			end
-			cachedBenchPromptLabel = scannedLabel
-			if cachedBenchPromptLabel then
+			if scannedLabel and getPromptLabelKey(scannedLabel) then
+				cachedBenchPromptLabel = scannedLabel
 				return cachedBenchPromptLabel
 			end
+
+			cachedBenchPromptLabel = nil
 
 			return nil
 		end
