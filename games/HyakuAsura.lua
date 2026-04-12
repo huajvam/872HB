@@ -1749,7 +1749,9 @@ function HyakuAsura.init(_context)
 				return false
 			end
 
-			local targetCFrame = bagPart.CFrame * CFrame.new(0, 0.5, 3.5)
+			local targetPosition = (bagPart.CFrame * CFrame.new(0, 0.5, 3.5)).Position
+			local lookAtPosition = Vector3.new(bagPart.Position.X, targetPosition.Y, bagPart.Position.Z)
+			local targetCFrame = CFrame.lookAt(targetPosition, lookAtPosition)
 			local success = pcall(function()
 				character:PivotTo(targetCFrame)
 			end)
