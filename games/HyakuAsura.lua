@@ -708,7 +708,26 @@ function HyakuAsura.init(_context)
 				return false
 			end
 
-			local targetCFrame = spotModel:GetPivot() * CFrame.new(0, 2, 0)
+			local anchorPart = nil
+			if spotModel:IsA("Model") then
+				anchorPart = spotModel.PrimaryPart or spotModel:FindFirstChildWhichIsA("BasePart", true)
+			elseif spotModel:IsA("BasePart") then
+				anchorPart = spotModel
+			end
+
+			local targetCFrame
+			if anchorPart then
+				targetCFrame = anchorPart.CFrame * CFrame.new(0, math.max(anchorPart.Size.Y * 0.5, 2), 0)
+			else
+				local ok, pivot = pcall(function()
+					return spotModel:GetPivot()
+				end)
+				if not ok or not pivot then
+					return false
+				end
+				targetCFrame = pivot * CFrame.new(0, 2, 0)
+			end
+
 			local root = getCharacterRoot(character)
 
 			if root then
