@@ -438,8 +438,30 @@ function HyakuAsura.init(_context)
 			end
 
 			local benchFolder = trainingSpots:FindFirstChild("Bench")
-			if benchFolder and benchFolder:IsA("Folder") then
+			if benchFolder then
 				return benchFolder
+			end
+
+			return nil
+		end
+
+		local function getBenchTeleportModel(benchFolder)
+			if not benchFolder then
+				return nil
+			end
+
+			if benchFolder:IsA("Model") then
+				return benchFolder
+			end
+
+			local directModel = benchFolder:FindFirstChildOfClass("Model")
+			if directModel then
+				return directModel
+			end
+
+			local anyPart = benchFolder:FindFirstChildWhichIsA("BasePart", true)
+			if anyPart then
+				return anyPart.Parent
 			end
 
 			return nil
@@ -466,7 +488,7 @@ function HyakuAsura.init(_context)
 					local root = getCharacterRoot(LocalPlayer.Character)
 					
 					if benchFolder and root then
-						local benchModel = benchFolder:FindFirstChildOfClass("Model")
+						local benchModel = getBenchTeleportModel(benchFolder)
 						local benchRemote = getBenchRemote()
 						
 						if benchModel and benchRemote then
