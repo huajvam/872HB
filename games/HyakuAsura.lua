@@ -455,6 +455,24 @@ function HyakuAsura.init(_context)
 			return closest
 		end
 
+		local function getBenchRemote(benchFolder)
+			local trainingSpots = workspace:FindFirstChild("TrainingSpots")
+			local radio = benchFolder and benchFolder:FindFirstChild("Radio")
+			local remote = radio and radio:FindFirstChild("Remote")
+			if remote and remote:IsA("RemoteEvent") then
+				return remote
+			end
+
+			local directBench = trainingSpots and trainingSpots:FindFirstChild("Bench")
+			local directRadio = directBench and directBench:FindFirstChild("Radio")
+			local directRemote = directRadio and directRadio:FindFirstChild("Remote")
+			if directRemote and directRemote:IsA("RemoteEvent") then
+				return directRemote
+			end
+
+			return nil
+		end
+
 		local function startAutoBench()
 			autoBenchToken += 1
 			local currentToken = autoBenchToken
@@ -466,7 +484,7 @@ function HyakuAsura.init(_context)
 					
 					if benchFolder and root then
 						local benchModel = benchFolder:FindFirstChildOfClass("Model")
-						local benchRemote = benchFolder:FindFirstChild("Radio", true) and benchFolder.Radio:FindFirstChild("Remote")
+						local benchRemote = getBenchRemote(benchFolder)
 						
 						if benchModel and benchRemote then
 							-- Stealth Teleport with micro-wait to settle physics
