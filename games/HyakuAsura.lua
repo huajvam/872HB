@@ -319,6 +319,7 @@ function HyakuAsura.init(_context)
 		local autoSquatMachineToken = 0
 		local autoTreadmillToken = 0
 		local autoBikeToken = 0
+		local autoBagsToken = 0
 		local autoSleepToken = 0
 		local autoEatToken = 0
 		local autoSleepInProgress = false
@@ -378,6 +379,10 @@ function HyakuAsura.init(_context)
 			["taco"] = "Taco",
 			["hotdog"] = "Hotdog",
 			["fries"] = "Fries",
+		}
+		local autoBagModes = {
+			"Strength",
+			"Attack Speed",
 		}
 
 		local function getRhythmInputRemote()
@@ -1330,6 +1335,20 @@ function HyakuAsura.init(_context)
 			return success
 		end
 
+		local function tapCombatKey()
+			if not VirtualInputManager then
+				return false
+			end
+
+			local success = pcall(function()
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+				task.wait(0.05)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+			end)
+
+			return success
+		end
+
 		local function clearTrainingPromptQueue()
 			table.clear(trainingPromptQueue)
 			lastBenchVisibleKey = nil
@@ -1469,6 +1488,10 @@ function HyakuAsura.init(_context)
 				return autoBikeToken
 			end
 
+			if toggleKey == "AutoBagsEnabled" then
+				return autoBagsToken
+			end
+
 			if toggleKey == "AutoSleepEnabled" then
 				return autoSleepToken
 			end
@@ -1482,6 +1505,7 @@ function HyakuAsura.init(_context)
 			"AutoSquatMachineEnabled",
 			"AutoTreadmillEnabled",
 			"AutoBikeEnabled",
+			"AutoBagsEnabled",
 		}
 
 		local function isAnyOtherAutoTrainEnabled(activeToggleKey)
@@ -1623,6 +1647,180 @@ function HyakuAsura.init(_context)
 				HoldEDuration = 0.3,
 				Duration = 60,
 			})
+		end
+
+		local function getPunchingBagContainer()
+			local punchingBagRoot = workspace:FindFirstChild("Punching bag")
+			return punchingBagRoot and punchingBagRoot:FindFirstChild("PUNCHING BAG")
+		end
+
+		local function getPunchingBagReservedValue(bagModel)
+			local bagNode = bagModel and bagModel:FindFirstChild("Bag")
+			local reserved = bagNode and bagNode:FindFirstChild("Reserved")
+			return reserved
+		end
+
+		local function isPunchingBagReservedByAnyoneElse(bagModel)
+			local reserved = getPunchingBagReservedValue(bagModel)
+			if not reserved then
+				return false
+			end
+
+			if reserved:IsA("ObjectValue") then
+				local value = reserved.Value
+				return value ~= nil and value ~= LocalPlayer and value ~= (LocalPlayer and LocalPlayer.Character)
+			end
+
+			local textValue = tostring(reserved.Value or "")
+			textValue = textValue:match("^%s*(.-)%s*$") or ""
+			if textValue == "" then
+				return false
+			end
+
+			return textValue ~= LocalPlayer.Name
+		end
+
+		local function isPunchingBagTrainingFinished(bagModel)
+			local reserved = getPunchingBagReservedValue(bagModel)
+			if not reserved then
+				return true
+			end
+
+			if reserved:IsA("ObjectValue") then
+				return reserved.Value == nil
+			end
+
+			local textValue = tostring(reserved.Value or "")
+			textValue = textValue:match("^%s*(.-)%s*$") or ""
+			return textValue == ""
+		end
+
+		local function getPunchingBagRemote(bagModel)
+			local bagNode = bagModel and bagModel:FindFirstChild("Bag")
+			local remote = bagNode and bagNode:FindFirstChild("RemoteEvent")
+			if remote and remote:IsA("RemoteEvent") then
+				return remote
+			end
+
+			return nil
+		end
+
+		local function getPunchingBagPart(bagModel)
+			if not bagModel then
+				return nil
+			end
+
+			local bagNode = bagModel:FindFirstChild("Bag")
+			if bagNode then
+				if bagNode:IsA("BasePart") then
+					return bagNode
+				end
+
+				local nestedPart = bagNode:FindFirstChildWhichIsA("BasePart", true)
+				if nestedPart then
+					return nestedPart
+				end
+			end
+
+			return bagModel:FindFirstChildWhichIsA("BasePart", true)
+		end
+
+		local function teleportCharacterToPunchingBag(character, bagModel)
+			local bagPart = getPunchingBagPart(bagModel)
+			local root = character and getCharacterRoot(character)
+			if not bagPart or not root then
+				return false
+			end
+
+			local targetCFrame = bagPart.CFrame * CFrame.new(0, 0.5, -3.5)
+			local success = pcall(function()
+				character:PivotTo(targetCFrame)
+			end)
+
+			return success
+		end
+
+		local function getClosestAvailablePunchingBag()
+			local container = getPunchingBagContainer()
+			local root = getCharacterRoot(LocalPlayer and LocalPlayer.Character)
+			if not container or not root then
+				return nil
+			end
+
+			local closestBag = nil
+			local closestDistance = math.huge
+
+			for _, descendant in ipairs(container:GetDescendants()) do
+				if descendant:IsA("Model") then
+					local bagNode = descendant:FindFirstChild("Bag")
+					local reserved = bagNode and bagNode:FindFirstChild("Reserved")
+					local remote = bagNode and bagNode:FindFirstChild("RemoteEvent")
+					local bagPart = getPunchingBagPart(descendant)
+
+					if bagNode and reserved and remote and bagPart and not isPunchingBagReservedByAnyoneElse(descendant) then
+						local distance = (root.Position - bagPart.Position).Magnitude
+						if distance < closestDistance then
+							closestDistance = distance
+							closestBag = descendant
+						end
+					end
+				end
+			end
+
+			return closestBag
+		end
+
+		local function getAutoBagRemoteMode()
+			local selectedMode = getOptionValue("AutoBagsMode", "Strength")
+			if selectedMode == "Attack Speed" then
+				return "atkspd"
+			end
+
+			return "str"
+		end
+
+		local function startAutoBags()
+			autoBagsToken += 1
+			local currentToken = autoBagsToken
+
+			task.spawn(function()
+				while currentToken == autoBagsToken and Toggles.AutoBagsEnabled and Toggles.AutoBagsEnabled.Value do
+					if isRecoveryInProgress() then
+						task.wait(0.2)
+						continue
+					end
+
+					local character = LocalPlayer and LocalPlayer.Character
+					local bagModel = getClosestAvailablePunchingBag()
+					local bagRemote = bagModel and getPunchingBagRemote(bagModel)
+					if character and bagModel and bagRemote then
+						disconnectTrainingPromptListeners()
+
+						if teleportCharacterToPunchingBag(character, bagModel) then
+							task.wait(0.2)
+							holdInteractionKey(0.3)
+							task.wait(0.15)
+							pcall(function()
+								bagRemote:FireServer(getAutoBagRemoteMode())
+							end)
+							task.wait(0.2)
+							tapCombatKey()
+							task.wait(0.15)
+
+							while currentToken == autoBagsToken and Toggles.AutoBagsEnabled and Toggles.AutoBagsEnabled.Value do
+								if isPunchingBagTrainingFinished(bagModel) then
+									break
+								end
+
+								sendLeftClickVirtualInput()
+								task.wait(0.08)
+							end
+						end
+					end
+
+					task.wait(0.6)
+				end
+			end)
 		end
 
 		local function startAutoSleep()
@@ -1875,6 +2073,35 @@ function HyakuAsura.init(_context)
 			end
 		end)
 
+		autoTrainGroup:AddToggle("AutoBagsEnabled", {
+			Text = "Auto Bags",
+			Default = false,
+		})
+
+		local autoBagsOptions = autoTrainGroup:AddDependencyBox()
+		autoBagsOptions:SetupDependencies({
+			{ Toggles.AutoBagsEnabled, true },
+		})
+
+		autoBagsOptions:AddDropdown("AutoBagsMode", {
+			Text = "Bag Mode",
+			Values = autoBagModes,
+			Default = "Strength",
+			Multi = false,
+		})
+
+		Toggles.AutoBagsEnabled:OnChanged(function(enabled)
+			if enabled then
+				disableOtherAutoTrainToggles("AutoBagsEnabled")
+				startAutoBags()
+			else
+				autoBagsToken += 1
+				if not isAnyOtherAutoTrainEnabled("AutoBagsEnabled") then
+					disconnectTrainingPromptListeners()
+				end
+			end
+		end)
+
 		autoTrainGroup:AddToggle("AutoSleepEnabled", {
 			Text = "Auto Sleep",
 			Default = false,
@@ -1980,6 +2207,9 @@ function HyakuAsura.init(_context)
 			end
 			if Toggles and Toggles.AutoBikeEnabled then
 				pcall(function() Toggles.AutoBikeEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AutoBagsEnabled then
+				pcall(function() Toggles.AutoBagsEnabled:SetValue(false) end)
 			end
 			if Toggles and Toggles.AutoSleepEnabled then
 				pcall(function() Toggles.AutoSleepEnabled:SetValue(false) end)
