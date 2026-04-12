@@ -431,18 +431,33 @@ function HyakuAsura.init(_context)
 		end
 
 		-- Auto Bench Automation Module
-		local function getBenchFolder()
+		local function getClosestBench()
 			local trainingSpots = workspace:FindFirstChild("TrainingSpots")
 			if not trainingSpots then
 				return nil
 			end
 
-			local benchFolder = trainingSpots:FindFirstChild("Bench")
-			if benchFolder then
-				return benchFolder
+			local closest, dist = nil, math.huge
+			local root = getCharacterRoot(LocalPlayer and LocalPlayer.Character)
+			if not root then
+				return nil
 			end
 
-			return nil
+			for _, folder in ipairs(trainingSpots:GetChildren()) do
+				if folder.Name == "Bench" then
+					local model = folder:FindFirstChildOfClass("Model") or folder:FindFirstChildWhichIsA("Model", true)
+					local part = model and (model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true))
+					if part then
+						local d = (root.Position - part.Position).Magnitude
+						if d < dist then
+							dist = d
+							closest = folder
+						end
+					end
+				end
+			end
+
+			return closest
 		end
 
 		local function getBenchTeleportModel(benchFolder)
@@ -472,9 +487,8 @@ function HyakuAsura.init(_context)
 			return nil
 		end
 
-		local function getBenchRemote()
-			local directBench = getBenchFolder()
-			local directRadio = directBench and directBench:FindFirstChild("Radio")
+		local function getBenchRemote(benchFolder)
+			local directRadio = benchFolder and benchFolder:FindFirstChild("Radio")
 			local directRemote = directRadio and directRadio:FindFirstChild("Remote")
 			if directRemote and directRemote:IsA("RemoteEvent") then
 				return directRemote
@@ -513,12 +527,12 @@ function HyakuAsura.init(_context)
 			
 			task.spawn(function()
 				while currentToken == autoBenchToken and Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value do
-					local benchFolder = getBenchFolder()
+					local benchFolder = getClosestBench()
 					local character = LocalPlayer and LocalPlayer.Character
 					
 					if benchFolder and character then
 						local benchModel = getBenchTeleportModel(benchFolder)
-						local benchRemote = getBenchRemote()
+						local benchRemote = getBenchRemote(benchFolder)
 						
 						if benchModel and benchRemote then
 							-- Stealth Teleport with micro-wait to settle physics
