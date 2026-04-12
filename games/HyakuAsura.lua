@@ -314,6 +314,9 @@ function HyakuAsura.init(_context)
 		local infiniteRhythmLoopToken = 0
 		local autoBenchToken = 0
 		local autoPullUpToken = 0
+		local autoSquatMachineToken = 0
+		local autoTreadmillToken = 0
+		local autoBikeToken = 0
 		local cachedBenchPromptFrame = nil
 		local lastBenchVisibleKey = nil
 		local lastBenchPromptScanAt = 0
@@ -979,7 +982,46 @@ function HyakuAsura.init(_context)
 				return autoPullUpToken
 			end
 
+			if toggleKey == "AutoSquatMachineEnabled" then
+				return autoSquatMachineToken
+			end
+
+			if toggleKey == "AutoTreadmillEnabled" then
+				return autoTreadmillToken
+			end
+
+			if toggleKey == "AutoBikeEnabled" then
+				return autoBikeToken
+			end
+
 			return -1
+		end
+
+		local autoTrainToggleKeys = {
+			"AutoBenchEnabled",
+			"AutoPullUpEnabled",
+			"AutoSquatMachineEnabled",
+			"AutoTreadmillEnabled",
+			"AutoBikeEnabled",
+		}
+
+		local function isAnyOtherAutoTrainEnabled(activeToggleKey)
+			for _, toggleKey in ipairs(autoTrainToggleKeys) do
+				if toggleKey ~= activeToggleKey and Toggles and Toggles[toggleKey] and Toggles[toggleKey].Value then
+					return true
+				end
+			end
+			return false
+		end
+
+		local function disableOtherAutoTrainToggles(activeToggleKey)
+			for _, toggleKey in ipairs(autoTrainToggleKeys) do
+				if toggleKey ~= activeToggleKey and Toggles and Toggles[toggleKey] and Toggles[toggleKey].Value then
+					pcall(function()
+						Toggles[toggleKey]:SetValue(false)
+					end)
+				end
+			end
 		end
 
 		local function startTrainingSpotAutomation(toggleKey, spotName, options)
@@ -1044,7 +1086,7 @@ function HyakuAsura.init(_context)
 					task.wait(1)
 				end
 
-				if not ((Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value) or (Toggles.AutoPullUpEnabled and Toggles.AutoPullUpEnabled.Value)) then
+				if not isAnyOtherAutoTrainEnabled(nil) and not (Toggles[toggleKey] and Toggles[toggleKey].Value) then
 					disconnectTrainingPromptListeners()
 				end
 			end)
@@ -1062,6 +1104,33 @@ function HyakuAsura.init(_context)
 		local function startAutoPullUp()
 			autoPullUpToken += 1
 			startTrainingSpotAutomation("AutoPullUpEnabled", "PullUp", {
+				HoldEBeforeStart = true,
+				HoldEDuration = 0.3,
+				Duration = 60,
+			})
+		end
+
+		local function startAutoSquatMachine()
+			autoSquatMachineToken += 1
+			startTrainingSpotAutomation("AutoSquatMachineEnabled", "Squat", {
+				HoldEBeforeStart = true,
+				HoldEDuration = 0.3,
+				Duration = 60,
+			})
+		end
+
+		local function startAutoTreadmill()
+			autoTreadmillToken += 1
+			startTrainingSpotAutomation("AutoTreadmillEnabled", "Treadmill", {
+				HoldEBeforeStart = true,
+				HoldEDuration = 0.3,
+				Duration = 60,
+			})
+		end
+
+		local function startAutoBike()
+			autoBikeToken += 1
+			startTrainingSpotAutomation("AutoBikeEnabled", "Bike", {
 				HoldEBeforeStart = true,
 				HoldEDuration = 0.3,
 				Duration = 60,
@@ -1103,13 +1172,11 @@ function HyakuAsura.init(_context)
 			Default = false,
 		}):OnChanged(function(enabled)
 			if enabled then
-				if Toggles and Toggles.AutoPullUpEnabled and Toggles.AutoPullUpEnabled.Value then
-					pcall(function() Toggles.AutoPullUpEnabled:SetValue(false) end)
-				end
+				disableOtherAutoTrainToggles("AutoBenchEnabled")
 				startAutoBench()
 			else
 				autoBenchToken += 1
-				if not (Toggles and Toggles.AutoPullUpEnabled and Toggles.AutoPullUpEnabled.Value) then
+				if not isAnyOtherAutoTrainEnabled("AutoBenchEnabled") then
 					disconnectTrainingPromptListeners()
 				end
 			end
@@ -1120,13 +1187,56 @@ function HyakuAsura.init(_context)
 			Default = false,
 		}):OnChanged(function(enabled)
 			if enabled then
-				if Toggles and Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value then
-					pcall(function() Toggles.AutoBenchEnabled:SetValue(false) end)
-				end
+				disableOtherAutoTrainToggles("AutoPullUpEnabled")
 				startAutoPullUp()
 			else
 				autoPullUpToken += 1
-				if not (Toggles and Toggles.AutoBenchEnabled and Toggles.AutoBenchEnabled.Value) then
+				if not isAnyOtherAutoTrainEnabled("AutoPullUpEnabled") then
+					disconnectTrainingPromptListeners()
+				end
+			end
+		end)
+
+		autoTrainGroup:AddToggle("AutoSquatMachineEnabled", {
+			Text = "Auto Squat Machine",
+			Default = false,
+		}):OnChanged(function(enabled)
+			if enabled then
+				disableOtherAutoTrainToggles("AutoSquatMachineEnabled")
+				startAutoSquatMachine()
+			else
+				autoSquatMachineToken += 1
+				if not isAnyOtherAutoTrainEnabled("AutoSquatMachineEnabled") then
+					disconnectTrainingPromptListeners()
+				end
+			end
+		end)
+
+		autoTrainGroup:AddToggle("AutoTreadmillEnabled", {
+			Text = "Auto Treadmill",
+			Default = false,
+		}):OnChanged(function(enabled)
+			if enabled then
+				disableOtherAutoTrainToggles("AutoTreadmillEnabled")
+				startAutoTreadmill()
+			else
+				autoTreadmillToken += 1
+				if not isAnyOtherAutoTrainEnabled("AutoTreadmillEnabled") then
+					disconnectTrainingPromptListeners()
+				end
+			end
+		end)
+
+		autoTrainGroup:AddToggle("AutoBikeEnabled", {
+			Text = "Auto Bike",
+			Default = false,
+		}):OnChanged(function(enabled)
+			if enabled then
+				disableOtherAutoTrainToggles("AutoBikeEnabled")
+				startAutoBike()
+			else
+				autoBikeToken += 1
+				if not isAnyOtherAutoTrainEnabled("AutoBikeEnabled") then
 					disconnectTrainingPromptListeners()
 				end
 			end
@@ -1139,6 +1249,9 @@ function HyakuAsura.init(_context)
 			setSpeedBoostEnabled(false)
 			autoBenchToken += 1
 			autoPullUpToken += 1
+			autoSquatMachineToken += 1
+			autoTreadmillToken += 1
+			autoBikeToken += 1
 			if Toggles and Toggles.InfiniteRhythmEnabled then
 				pcall(function() Toggles.InfiniteRhythmEnabled:SetValue(false) end)
 			end
@@ -1153,6 +1266,15 @@ function HyakuAsura.init(_context)
 			end
 			if Toggles and Toggles.AutoPullUpEnabled then
 				pcall(function() Toggles.AutoPullUpEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AutoSquatMachineEnabled then
+				pcall(function() Toggles.AutoSquatMachineEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AutoTreadmillEnabled then
+				pcall(function() Toggles.AutoTreadmillEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AutoBikeEnabled then
+				pcall(function() Toggles.AutoBikeEnabled:SetValue(false) end)
 			end
 		end)
 	end
