@@ -1749,7 +1749,7 @@ function HyakuAsura.init(_context)
 				return false
 			end
 
-			local targetCFrame = bagPart.CFrame * CFrame.new(0, 0.5, 3.5) * CFrame.Angles(0, math.rad(-90), 0)
+			local targetCFrame = bagPart.CFrame * CFrame.new(0, 0.5, 3.5) * CFrame.Angles(0, math.pi, 0)
 			local success = pcall(function()
 				character:PivotTo(targetCFrame)
 			end)
