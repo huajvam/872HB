@@ -1422,9 +1422,7 @@ function HyakuAsura.init(_context)
 
 		local function cancelDeliveryFarmTween()
 			if activeDeliveryFarmTween then
-				pcall(function()
-					activeDeliveryFarmTween:Cancel()
-				end)
+				pcall(activeDeliveryFarmTween)
 				activeDeliveryFarmTween = nil
 			end
 		end
@@ -1512,26 +1510,45 @@ function HyakuAsura.init(_context)
 				duration = math.max(distance / getDeliveryTweenSpeed(), 0.05)
 			end
 
-			local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
-			local rootTween = TweenService:Create(root, tweenInfo, { CFrame = targetCFrame })
-			local platformTween = platform and TweenService:Create(platform, tweenInfo, { CFrame = targetCFrame * CFrame.new(0, -3.5, 0) }) or nil
-			activeDeliveryFarmTween = rootTween
+			local cancelled = false
+			activeDeliveryFarmTween = function()
+				cancelled = true
+			end
 
 			local success = pcall(function()
+				local startCFrame = root.CFrame
+				local startTime = os.clock()
+				local endTime = startTime + duration
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				rootTween:Play()
-				if platformTween then
-					platformTween:Play()
+				while not cancelled do
+					local now = os.clock()
+					local alpha = duration <= 0 and 1 or math.clamp((now - startTime) / duration, 0, 1)
+					local currentCFrame = startCFrame:Lerp(targetCFrame, alpha)
+					root.CFrame = currentCFrame
+					if platform then
+						platform.CFrame = currentCFrame * CFrame.new(0, -3.5, 0)
+					end
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+					if now >= endTime or alpha >= 1 then
+						break
+					end
+					RunService.Heartbeat:Wait()
 				end
-				rootTween.Completed:Wait()
-				root.CFrame = targetCFrame
+
+				if not cancelled then
+					root.CFrame = targetCFrame
+					if platform then
+						platform.CFrame = targetCFrame * CFrame.new(0, -3.5, 0)
+					end
+				end
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
 			end)
 
 			activeDeliveryFarmTween = nil
-			return success
+			return success and not cancelled
 		end
 
 		local function setCharacterDeliveryPhysics(character, enabled)
