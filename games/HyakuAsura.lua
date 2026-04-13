@@ -405,12 +405,26 @@ function HyakuAsura.init(_context)
 			ManualDistance = 3.5,
 			YawOffsetDegrees = 0,
 		}
-		local deliveryQuestStartCFrame = CFrame.new(
-			1438.35718, 24.6887817, -374.204132,
-			0.055374939, -5.22860111e-09, -0.998465657,
-			5.50765904e-08, 1, -2.18208629e-09,
-			0.998465657, -5.48712507e-08, 0.055374939
-		)
+		local deliveryQuestStartCFrames = {
+			CFrame.new(
+				1438.35718, 24.6887817, -374.204132,
+				0.055374939, -5.22860111e-09, -0.998465657,
+				5.50765904e-08, 1, -2.18208629e-09,
+				0.998465657, -5.48712507e-08, 0.055374939
+			),
+			CFrame.new(
+				1438.22217, 24.6887779, -378.930298,
+				-0.128450647, -7.88851082e-08, -0.991715908,
+				2.83079711e-08, 1, -8.32106153e-08,
+				0.991715908, -3.87619217e-08, -0.128450647
+			),
+			CFrame.new(
+				1438.37256, 24.6887779, -370.551208,
+				0.668333948, 2.11442042e-09, -0.743861377,
+				4.54736231e-08, 1, 4.36989822e-08,
+				0.743861377, -6.30315853e-08, 0.668333948
+			),
+		}
 
 		local function getRhythmInputRemote()
 			local character = LocalPlayer and LocalPlayer.Character
@@ -1615,10 +1629,11 @@ function HyakuAsura.init(_context)
 
 			cancelDeliveryFarmTween()
 			destroyDeliveryFarmPlatform()
+			local startCFrame = deliveryQuestStartCFrames[math.random(1, #deliveryQuestStartCFrames)]
 			local success = pcall(function()
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				root.CFrame = deliveryQuestStartCFrame
+				root.CFrame = startCFrame
 			end)
 			if not success then
 				return false
@@ -1645,10 +1660,24 @@ function HyakuAsura.init(_context)
 
 			local basePosition = spotPart.Position
 			local currentPosition = root.Position
-			local startUndergroundCFrame = CFrame.new(currentPosition.X, basePosition.Y - 12, currentPosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
-			local undergroundCFrame = CFrame.new(basePosition.X, basePosition.Y - 12, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
-			local surfaceCFrame = CFrame.new(basePosition.X, basePosition.Y + 2, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
-			local retreatCFrame = CFrame.new(basePosition.X, basePosition.Y - 12, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
+			local undergroundY = basePosition.Y - 12
+			local surfaceY = basePosition.Y + 2
+			local flatLook = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+			if flatLook.Magnitude <= 0.001 then
+				flatLook = Vector3.new(0, 0, -1)
+			else
+				flatLook = flatLook.Unit
+			end
+
+			local fixedYaw = math.atan2(-flatLook.X, -flatLook.Z)
+			local function uprightDeliveryCFrame(x, y, z)
+				return CFrame.new(x, y, z) * CFrame.Angles(0, fixedYaw, 0)
+			end
+
+			local startUndergroundCFrame = uprightDeliveryCFrame(currentPosition.X, undergroundY, currentPosition.Z)
+			local undergroundCFrame = uprightDeliveryCFrame(basePosition.X, undergroundY, basePosition.Z)
+			local surfaceCFrame = uprightDeliveryCFrame(basePosition.X, surfaceY, basePosition.Z)
+			local retreatCFrame = uprightDeliveryCFrame(basePosition.X, undergroundY, basePosition.Z)
 			local collisionStates = setCharacterDeliveryPhysics(character, true)
 
 			local descendSuccess = pcall(function()
@@ -2610,7 +2639,7 @@ function HyakuAsura.init(_context)
 			Rounding = 0,
 		})
 
-		deliveryFarmOptions:AddLabel("⚠ anything above 50 is bannable")
+		deliveryFarmOptions:AddLabel("Warning: anything above 50 is bannable")
 
 		Toggles.DeliveryFarmEnabled:OnChanged(function(enabled)
 			if enabled then
