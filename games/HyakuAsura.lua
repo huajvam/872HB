@@ -31,6 +31,7 @@ local HYAKU_RHYTHM_REMOTE_INTERVAL = 0.03
 local HYAKU_PROMPT_SCAN_INTERVAL = 0.12
 
 local LocalPlayer = Players.LocalPlayer
+local VirtualUser = game:GetService("VirtualUser")
 local maid = Maid.new()
 local unloadCallbacks = {}
 
@@ -328,6 +329,7 @@ function HyakuAsura.init(_context)
 		local activeAutoBagModel = nil
 		local autoSleepInProgress = false
 		local autoEatInProgress = false
+		local antiAfkConnection = nil
 		local cachedBenchPromptFrame = nil
 		local lastBenchVisibleKey = nil
 		local lastBenchPromptScanAt = 0
@@ -1560,6 +1562,16 @@ function HyakuAsura.init(_context)
 			return false
 		end
 
+		local function getEnabledAutoTrainToggleKey()
+			for _, toggleKey in ipairs(autoTrainToggleKeys) do
+				if Toggles and Toggles[toggleKey] and Toggles[toggleKey].Value then
+					return toggleKey
+				end
+			end
+
+			return nil
+		end
+
 		local function disableOtherAutoTrainToggles(activeToggleKey)
 			for _, toggleKey in ipairs(autoTrainToggleKeys) do
 				if toggleKey ~= activeToggleKey and Toggles and Toggles[toggleKey] and Toggles[toggleKey].Value then
@@ -2006,6 +2018,60 @@ function HyakuAsura.init(_context)
 			end)
 		end
 
+		local function restartAutoTrainMode(toggleKey)
+			if toggleKey == "AutoBenchEnabled" then
+				startAutoBench()
+				return
+			end
+
+			if toggleKey == "AutoPullUpEnabled" then
+				startAutoPullUp()
+				return
+			end
+
+			if toggleKey == "AutoSquatMachineEnabled" then
+				startAutoSquatMachine()
+				return
+			end
+
+			if toggleKey == "AutoTreadmillEnabled" then
+				startAutoTreadmill()
+				return
+			end
+
+			if toggleKey == "AutoBikeEnabled" then
+				startAutoBike()
+				return
+			end
+
+			if toggleKey == "AutoBagsEnabled" then
+				startAutoBags()
+			end
+		end
+
+		local function stopAntiAfk()
+			if antiAfkConnection then
+				pcall(function()
+					antiAfkConnection:Disconnect()
+				end)
+				antiAfkConnection = nil
+			end
+		end
+
+		local function startAntiAfk()
+			stopAntiAfk()
+			if not LocalPlayer or not LocalPlayer.Idled then
+				return
+			end
+
+			antiAfkConnection = LocalPlayer.Idled:Connect(function()
+				pcall(function()
+					VirtualUser:CaptureController()
+					VirtualUser:ClickButton2(Vector2.new(0, 0))
+				end)
+			end)
+		end
+
 		local function startAutoSleep()
 			autoSleepToken += 1
 			local currentToken = autoSleepToken
@@ -2018,6 +2084,7 @@ function HyakuAsura.init(_context)
 						local currentFatique = bodyFatique and tonumber(bodyFatique.Value)
 
 						if currentFatique and currentFatique >= threshold then
+							local resumeAutoTrainToggleKey = getEnabledAutoTrainToggleKey()
 							local bedFolder = getClosestHospitalBed()
 							local character = LocalPlayer and LocalPlayer.Character
 							local bedModel = bedFolder and getTrainingSpotTeleportModel(bedFolder)
@@ -2044,6 +2111,13 @@ function HyakuAsura.init(_context)
 											bedRemote:FireServer("Leave")
 										end)
 										task.wait(0.3)
+										if resumeAutoTrainToggleKey
+											and Toggles
+											and Toggles[resumeAutoTrainToggleKey]
+											and Toggles[resumeAutoTrainToggleKey].Value
+										then
+											restartAutoTrainMode(resumeAutoTrainToggleKey)
+										end
 										break
 									end
 									task.wait(0.2)
@@ -2180,6 +2254,17 @@ function HyakuAsura.init(_context)
 				startModeratorDetector()
 			else
 				stopModeratorDetector()
+			end
+		end)
+
+		localCheatsGroup:AddToggle("AntiAfkEnabled", {
+			Text = "Anti-AFK",
+			Default = false,
+		}):OnChanged(function(enabled)
+			if enabled then
+				startAntiAfk()
+			else
+				stopAntiAfk()
 			end
 		end)
 
@@ -2362,6 +2447,7 @@ function HyakuAsura.init(_context)
 			stopInfiniteStaminaHook()
 			disconnectTrainingPromptListeners()
 			stopModeratorDetector()
+			stopAntiAfk()
 			setSpeedBoostEnabled(false)
 			autoBenchToken += 1
 			autoPullUpToken += 1
@@ -2385,6 +2471,9 @@ function HyakuAsura.init(_context)
 			end
 			if Toggles and Toggles.ModeratorDetectorEnabled then
 				pcall(function() Toggles.ModeratorDetectorEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.AntiAfkEnabled then
+				pcall(function() Toggles.AntiAfkEnabled:SetValue(false) end)
 			end
 			if Toggles and Toggles.AutoBenchEnabled then
 				pcall(function() Toggles.AutoBenchEnabled:SetValue(false) end)
