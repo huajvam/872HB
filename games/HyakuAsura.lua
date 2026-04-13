@@ -1703,7 +1703,7 @@ function HyakuAsura.init(_context)
 					activeDeliveryFarmBaseY = deliveryQuestDefaultBaseY
 				end
 				if activeDeliveryFarmUndergroundY == nil then
-					activeDeliveryFarmUndergroundY = activeDeliveryFarmBaseY - 12
+					activeDeliveryFarmUndergroundY = activeDeliveryFarmBaseY - 8
 				end
 				return true
 			end
@@ -1722,7 +1722,7 @@ function HyakuAsura.init(_context)
 
 			task.wait(0.2)
 			activeDeliveryFarmBaseY = startCFrame.Position.Y
-			activeDeliveryFarmUndergroundY = activeDeliveryFarmBaseY - 12
+			activeDeliveryFarmUndergroundY = activeDeliveryFarmBaseY - 8
 			holdInteractionKey(0.5)
 			local timeoutAt = os.clock() + 3
 			while os.clock() < timeoutAt do
