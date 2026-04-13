@@ -1515,6 +1515,11 @@ function HyakuAsura.init(_context)
 		end
 
 		local function getActiveDeliverySpot()
+			local spotsFolder = getDeliverySpotsFolder()
+			if not spotsFolder then
+				return nil
+			end
+
 			local activeEffects = getLocalEntityActiveEffectsFolder()
 			if not activeEffects then
 				return nil
@@ -1531,7 +1536,12 @@ function HyakuAsura.init(_context)
 			end
 
 			local targetPart = partValue.Value
-			if targetPart and targetPart:IsA("BasePart") and targetPart.Name == "DeliverySpot" then
+			if targetPart
+				and targetPart:IsA("BasePart")
+				and targetPart.Name == "DeliverySpot"
+				and targetPart:IsDescendantOf(spotsFolder)
+				and targetPart:FindFirstChildWhichIsA("TouchInterest")
+			then
 				return targetPart
 			end
 
