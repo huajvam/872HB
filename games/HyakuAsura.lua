@@ -2288,14 +2288,16 @@ function HyakuAsura.init(_context)
 						continue
 					end
 
+					local deliveryActive = hasActiveDeliveryEffect()
 					local activeSpot = getActiveDeliverySpot()
-					if not activeSpot then
+					if not deliveryActive then
 						startDeliveryQuest(character)
 						task.wait(0.75)
+						deliveryActive = hasActiveDeliveryEffect()
 						activeSpot = getActiveDeliverySpot()
 					end
 
-					if activeSpot then
+					if deliveryActive and activeSpot then
 						runDeliveryToSpot(character, activeSpot)
 						task.wait(0.5)
 					else
