@@ -1520,11 +1520,15 @@ function HyakuAsura.init(_context)
 			local success = pcall(function()
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
+				local wasAnchored = root.Anchored
+				root.Anchored = true
 				rootTween:Play()
 				if platformTween then
 					platformTween:Play()
 				end
 				rootTween.Completed:Wait()
+				root.CFrame = targetCFrame
+				root.Anchored = wasAnchored
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
 			end)
@@ -1574,9 +1578,22 @@ function HyakuAsura.init(_context)
 			end
 
 			local basePosition = spotPart.Position
+			local currentPosition = root.Position
+			local startUndergroundCFrame = CFrame.new(currentPosition.X, basePosition.Y - 12, currentPosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
 			local undergroundCFrame = CFrame.new(basePosition.X, basePosition.Y - 12, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
 			local surfaceCFrame = CFrame.new(basePosition.X, basePosition.Y + 2, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
 			local retreatCFrame = CFrame.new(basePosition.X, basePosition.Y - 12, basePosition.Z) * CFrame.Angles(0, root.Orientation.Y * math.pi / 180, 0)
+
+			local descendSuccess = pcall(function()
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+				root.CFrame = startUndergroundCFrame
+			end)
+			if not descendSuccess then
+				return false
+			end
+
+			task.wait(0.05)
 
 			if not tweenCharacterRootTo(root, undergroundCFrame) then
 				return false
