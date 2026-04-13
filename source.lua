@@ -217,12 +217,31 @@ local function executeChunk(source, chunkName)
 	return result
 end
 
+local function looksLikeLocalPath(path)
+	if type(path) ~= "string" or path == "" then
+		return false
+	end
+
+	if path:find("^https?://") then
+		return false
+	end
+
+	return path:find("^[A-Za-z]:[\\/]")
+		or path:find("^[\\/][\\/]")
+		or not path:find("[:*?\"<>|]")
+end
+
 local function canReadLocalFile(path)
-	return type(isfile) == "function" and type(readfile) == "function" and isfile(path)
+	if type(isfile) ~= "function" or type(readfile) ~= "function" or not looksLikeLocalPath(path) then
+		return false
+	end
+
+	local ok, result = pcall(isfile, path)
+	return ok and result == true
 end
 
 local function tryReadLocalFile(path)
-	if type(readfile) ~= "function" or type(path) ~= "string" or path == "" then
+	if type(readfile) ~= "function" or not looksLikeLocalPath(path) then
 		return nil
 	end
 
