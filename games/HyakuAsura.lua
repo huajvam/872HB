@@ -15,6 +15,7 @@ local Players, MarketplaceService, ReplicatedStorage, RunService, UserInputServi
 	"VirtualInputManager"
 )
 local HttpService = game:GetService("HttpService")
+local PathfindingService = game:GetService("PathfindingService")
 local TeleportService = game:GetService("TeleportService")
 local TweenService = game:GetService("TweenService")
 
@@ -321,6 +322,7 @@ function HyakuAsura.init(_context)
 		local autoEatGroup = Tabs.Main:AddRightGroupbox("Auto Eat")
 		local infiniteRhythmLoopToken = 0
 		local deliveryFarmToken = 0
+		local pathfindingDeliveryFarmToken = 0
 		local autoBenchToken = 0
 		local autoPullUpToken = 0
 		local autoSquatMachineToken = 0
@@ -1502,6 +1504,139 @@ function HyakuAsura.init(_context)
 			return navigationBeam ~= nil and navigationBeam:IsA("StringValue")
 		end
 
+		local function isPathfindingDeliveryFarmActive(currentToken)
+			return currentToken == pathfindingDeliveryFarmToken
+				and Toggles
+				and Toggles.PathfindingDeliveryFarmEnabled
+				and Toggles.PathfindingDeliveryFarmEnabled.Value == true
+		end
+
+		local function walkCharacterToPosition(character, targetPosition, stopDistance)
+			local humanoid = character and getCharacterHumanoid(character)
+			local root = character and getCharacterRoot(character)
+			if not humanoid or not root or not targetPosition then
+				return false
+			end
+
+			stopDistance = math.max(tonumber(stopDistance) or 6, 2)
+			local stopDistanceSquared = stopDistance * stopDistance
+
+			local initialOffset = root.Position - targetPosition
+			if initialOffset:Dot(initialOffset) <= stopDistanceSquared then
+				return true
+			end
+
+			local path = PathfindingService:CreatePath({
+				AgentRadius = 2,
+				AgentHeight = 5,
+				AgentCanJump = true,
+				AgentCanClimb = true,
+				WaypointSpacing = 4,
+			})
+
+			local computed = pcall(function()
+				path:ComputeAsync(root.Position, targetPosition)
+			end)
+
+			if not computed or path.Status ~= Enum.PathStatus.Success then
+				humanoid:MoveTo(targetPosition)
+				local fallbackDeadline = os.clock() + 6
+				while os.clock() < fallbackDeadline do
+					local currentRoot = getCharacterRoot(character)
+					if not currentRoot then
+						return false
+					end
+
+					local offset = currentRoot.Position - targetPosition
+					if offset:Dot(offset) <= stopDistanceSquared then
+						return true
+					end
+
+					task.wait(0.1)
+				end
+
+				return false
+			end
+
+			for _, waypoint in ipairs(path:GetWaypoints()) do
+				local currentRoot = getCharacterRoot(character)
+				if not currentRoot then
+					return false
+				end
+
+				local currentOffset = currentRoot.Position - targetPosition
+				if currentOffset:Dot(currentOffset) <= stopDistanceSquared then
+					return true
+				end
+
+				if waypoint.Action == Enum.PathWaypointAction.Jump then
+					humanoid.Jump = true
+				end
+
+				humanoid:MoveTo(waypoint.Position)
+				local reached = humanoid.MoveToFinished:Wait()
+				if not reached then
+					return false
+				end
+			end
+
+			local finalRoot = getCharacterRoot(character)
+			if not finalRoot then
+				return false
+			end
+
+			local finalOffset = finalRoot.Position - targetPosition
+			return finalOffset:Dot(finalOffset) <= stopDistanceSquared
+		end
+
+		local function startPathfindingDeliveryQuest(character)
+			if hasActiveDeliveryEffect() or getActiveDeliverySpot() then
+				return true
+			end
+
+			local boardPosition = deliveryQuestStartCFrame.Position
+			if not walkCharacterToPosition(character, boardPosition, 8) then
+				return false
+			end
+
+			task.wait(0.15)
+			holdInteractionKey(0.5)
+			local timeoutAt = os.clock() + 3
+			while os.clock() < timeoutAt do
+				if hasActiveDeliveryEffect() or getActiveDeliverySpot() then
+					return true
+				end
+				task.wait(0.1)
+			end
+
+			return false
+		end
+
+		local function runPathfindingDeliveryToSpot(character, spotPart)
+			if not character or not spotPart then
+				return false
+			end
+
+			if not walkCharacterToPosition(character, spotPart.Position, 7) then
+				return false
+			end
+
+			local timeoutAt = os.clock() + 8
+			while os.clock() < timeoutAt do
+				if not spotPart.Parent then
+					return true
+				end
+
+				if not spotPart:FindFirstChildOfClass("TouchInterest") then
+					return true
+				end
+
+				task.wait(0.1)
+			end
+
+			return false
+		end
+
 		local function tweenCharacterRootTo(root, targetCFrame, overrideDuration)
 			if not root or not targetCFrame then
 				return false
@@ -2396,6 +2531,38 @@ function HyakuAsura.init(_context)
 			end)
 		end
 
+		local function startPathfindingDeliveryFarm()
+			pathfindingDeliveryFarmToken += 1
+			local currentToken = pathfindingDeliveryFarmToken
+
+			task.spawn(function()
+				while isPathfindingDeliveryFarmActive(currentToken) do
+					local character = LocalPlayer and LocalPlayer.Character
+					local root = character and getCharacterRoot(character)
+					if not character or not root then
+						task.wait(0.5)
+						continue
+					end
+
+					local deliveryActive = hasActiveDeliveryEffect() or getActiveDeliverySpot() ~= nil
+					local activeSpot = getActiveDeliverySpot()
+					if not deliveryActive then
+						startPathfindingDeliveryQuest(character)
+						task.wait(0.4)
+						deliveryActive = hasActiveDeliveryEffect() or getActiveDeliverySpot() ~= nil
+						activeSpot = getActiveDeliverySpot()
+					end
+
+					if deliveryActive and activeSpot then
+						runPathfindingDeliveryToSpot(character, activeSpot)
+						task.wait(0.2)
+					else
+						task.wait(0.5)
+					end
+				end
+			end)
+		end
+
 		local function startAutoSleep()
 			autoSleepToken += 1
 			local currentToken = autoSleepToken
@@ -2597,6 +2764,11 @@ function HyakuAsura.init(_context)
 			Default = false,
 		})
 
+		autoFarmGroup:AddToggle("PathfindingDeliveryFarmEnabled", {
+			Text = "Pathfinding Delivery Farm",
+			Default = false,
+		})
+
 		local deliveryFarmOptions = autoFarmGroup:AddDependencyBox()
 		deliveryFarmOptions:SetupDependencies({
 			{ Toggles.DeliveryFarmEnabled, true },
@@ -2614,11 +2786,25 @@ function HyakuAsura.init(_context)
 
 		Toggles.DeliveryFarmEnabled:OnChanged(function(enabled)
 			if enabled then
+				if Toggles.PathfindingDeliveryFarmEnabled and Toggles.PathfindingDeliveryFarmEnabled.Value then
+					Toggles.PathfindingDeliveryFarmEnabled:SetValue(false)
+				end
 				startDeliveryFarm()
 			else
 				deliveryFarmToken += 1
 				cancelDeliveryFarmTween()
 				destroyDeliveryFarmPlatform()
+			end
+		end)
+
+		Toggles.PathfindingDeliveryFarmEnabled:OnChanged(function(enabled)
+			if enabled then
+				if Toggles.DeliveryFarmEnabled and Toggles.DeliveryFarmEnabled.Value then
+					Toggles.DeliveryFarmEnabled:SetValue(false)
+				end
+				startPathfindingDeliveryFarm()
+			else
+				pathfindingDeliveryFarmToken += 1
 			end
 		end)
 
