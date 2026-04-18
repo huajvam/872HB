@@ -322,6 +322,7 @@ function HyakuAsura.init(_context)
 		local infiniteRhythmLoopToken = 0
 		local deliveryFarmToken = 0
 		local pathfindingDeliveryFarmToken = 0
+		local deliveryRouteRecorderToken = 0
 		local autoBenchToken = 0
 		local autoPullUpToken = 0
 		local autoSquatMachineToken = 0
@@ -337,6 +338,10 @@ function HyakuAsura.init(_context)
 		local autoEatInProgress = false
 		local antiAfkConnection = nil
 		local deliveryRunWHeld = false
+		local savedDeliveryRoute = {
+		}
+		local recordedDeliveryRoute = table.clone and table.clone(savedDeliveryRoute) or {}
+		local deliveryRouteStatusLabel = nil
 		local cachedBenchPromptFrame = nil
 		local lastBenchVisibleKey = nil
 		local lastBenchPromptScanAt = 0
@@ -397,6 +402,12 @@ function HyakuAsura.init(_context)
 			"Strength",
 			"Attack Speed",
 		}
+		local deliveryPathModes = {
+			"Direct Target",
+			"Recorded Route",
+		}
+		local deliveryRouteStorageFolder = "HuajHub"
+		local deliveryRouteStoragePath = deliveryRouteStorageFolder .. "\\hyaku_delivery_route.json"
 		local autoBagPlacementConfig = {
 			Axis = "LookVector",
 			DistanceOffset = 0.35,
@@ -1470,6 +1481,196 @@ function HyakuAsura.init(_context)
 			return delivery and delivery:FindFirstChild("Spots")
 		end
 
+		local function updateDeliveryRouteStatusLabel()
+			if deliveryRouteStatusLabel and type(deliveryRouteStatusLabel.SetText) == "function" then
+				local recordingEnabled = Toggles
+					and Toggles.RecordDeliveryRouteEnabled
+					and Toggles.RecordDeliveryRouteEnabled.Value == true
+				deliveryRouteStatusLabel:SetText(string.format(
+					"Recorded Route: %d point%s%s",
+					#recordedDeliveryRoute,
+					#recordedDeliveryRoute == 1 and "" or "s",
+					recordingEnabled and " | Recording" or ""
+				))
+			end
+		end
+
+		local function saveRecordedDeliveryRoute()
+			if type(writefile) ~= "function" then
+				return false
+			end
+
+			local payload = {
+				points = {},
+			}
+
+			for _, point in ipairs(recordedDeliveryRoute) do
+				table.insert(payload.points, {
+					x = point.X,
+					y = point.Y,
+					z = point.Z,
+				})
+			end
+
+			local encoded = HttpService:JSONEncode(payload)
+			local ok = pcall(function()
+				if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(deliveryRouteStorageFolder) then
+					makefolder(deliveryRouteStorageFolder)
+				end
+				writefile(deliveryRouteStoragePath, encoded)
+			end)
+
+			return ok
+		end
+
+		local function loadRecordedDeliveryRoute()
+			if type(readfile) ~= "function" or type(isfile) ~= "function" then
+				return false
+			end
+
+			local ok, exists = pcall(function()
+				return isfile(deliveryRouteStoragePath)
+			end)
+			if not ok or not exists then
+				return false
+			end
+
+			local readOk, content = pcall(function()
+				return readfile(deliveryRouteStoragePath)
+			end)
+			if not readOk or type(content) ~= "string" or content == "" then
+				return false
+			end
+
+			local decodeOk, decoded = pcall(function()
+				return HttpService:JSONDecode(content)
+			end)
+			if not decodeOk or type(decoded) ~= "table" or type(decoded.points) ~= "table" then
+				return false
+			end
+
+			table.clear(recordedDeliveryRoute)
+			for _, point in ipairs(decoded.points) do
+				if type(point) == "table" then
+					local x = tonumber(point.x)
+					local y = tonumber(point.y)
+					local z = tonumber(point.z)
+					if x and y and z then
+						table.insert(recordedDeliveryRoute, Vector3.new(x, y, z))
+					end
+				end
+			end
+
+			updateDeliveryRouteStatusLabel()
+			return #recordedDeliveryRoute > 0
+		end
+
+		local function clearRecordedDeliveryRoute()
+			table.clear(recordedDeliveryRoute)
+			saveRecordedDeliveryRoute()
+			updateDeliveryRouteStatusLabel()
+		end
+
+		local function getDeliveryPlaybackMode()
+			return getOptionValue("PathfindingDeliveryRouteMode", "Direct Target")
+		end
+
+		local function getClosestRecordedRouteIndex(position)
+			if typeof(position) ~= "Vector3" or #recordedDeliveryRoute == 0 then
+				return nil
+			end
+
+			local closestIndex = 1
+			local closestDistanceSquared = math.huge
+			for index, point in ipairs(recordedDeliveryRoute) do
+				local delta = point - position
+				local distanceSquared = delta:Dot(delta)
+				if distanceSquared < closestDistanceSquared then
+					closestDistanceSquared = distanceSquared
+					closestIndex = index
+				end
+			end
+
+			return closestIndex
+		end
+
+		local function formatRecordedDeliveryRoute()
+			local lines = {
+				"local recordedDeliveryRoute = {",
+			}
+
+			for _, point in ipairs(recordedDeliveryRoute) do
+				table.insert(lines, string.format(
+					"\tVector3.new(%.3f, %.3f, %.3f),",
+					point.X,
+					point.Y,
+					point.Z
+				))
+			end
+
+			table.insert(lines, "}")
+			return table.concat(lines, "\n")
+		end
+
+		local function copyRecordedDeliveryRoute()
+			local routeSource = formatRecordedDeliveryRoute()
+			if type(setclipboard) == "function" then
+				pcall(function()
+					setclipboard(routeSource)
+				end)
+				return true
+			end
+
+			if type(toclipboard) == "function" then
+				pcall(function()
+					toclipboard(routeSource)
+				end)
+				return true
+			end
+
+			return false
+		end
+
+		local function startDeliveryRouteRecorder()
+			deliveryRouteRecorderToken += 1
+			local currentToken = deliveryRouteRecorderToken
+
+			task.spawn(function()
+				local lastRecordedPosition = nil
+				while currentToken == deliveryRouteRecorderToken
+					and Toggles
+					and Toggles.RecordDeliveryRouteEnabled
+					and Toggles.RecordDeliveryRouteEnabled.Value
+				do
+					local character = LocalPlayer and LocalPlayer.Character
+					local root = character and getCharacterRoot(character)
+					if root then
+						local sampleDistance = math.max(tonumber(getOptionValue("DeliveryRouteSampleDistance", 8)) or 8, 1)
+						local position = root.Position
+
+						if not lastRecordedPosition then
+							table.insert(recordedDeliveryRoute, position)
+							lastRecordedPosition = position
+							saveRecordedDeliveryRoute()
+							updateDeliveryRouteStatusLabel()
+						else
+							local delta = position - lastRecordedPosition
+							if delta:Dot(delta) >= (sampleDistance * sampleDistance) then
+								table.insert(recordedDeliveryRoute, position)
+								lastRecordedPosition = position
+								saveRecordedDeliveryRoute()
+								updateDeliveryRouteStatusLabel()
+							end
+						end
+					end
+
+					task.wait(0.1)
+				end
+
+				updateDeliveryRouteStatusLabel()
+			end)
+		end
+
 		local function getActiveDeliverySpot()
 			local activeEffects = getLocalEntityActiveEffectsFolder()
 			if not activeEffects then
@@ -1620,6 +1821,36 @@ function HyakuAsura.init(_context)
 			return false
 		end
 
+		local function runCharacterAlongRecordedRoute(character, finalTargetPosition, currentToken)
+			if #recordedDeliveryRoute == 0 then
+				return false
+			end
+
+			local root = character and getCharacterRoot(character)
+			if not root then
+				return false
+			end
+
+			local startIndex = getClosestRecordedRouteIndex(root.Position) or 1
+			for index = startIndex, #recordedDeliveryRoute do
+				if currentToken and not isPathfindingDeliveryFarmActive(currentToken) then
+					return false
+				end
+
+				if not runCharacterToPosition(character, recordedDeliveryRoute[index], 6, currentToken) then
+					return false
+				end
+
+				task.wait(0.05)
+			end
+
+			if typeof(finalTargetPosition) == "Vector3" then
+				return runCharacterToPosition(character, finalTargetPosition, 7, currentToken)
+			end
+
+			return true
+		end
+
 		local function startPathfindingDeliveryQuest(character, currentToken)
 			if hasActiveDeliveryEffect() or getActiveDeliverySpot() then
 				return true
@@ -1648,8 +1879,14 @@ function HyakuAsura.init(_context)
 				return false
 			end
 
-			if not runCharacterToPosition(character, spotPart.Position, 7, currentToken) then
-				return false
+			if getDeliveryPlaybackMode() == "Recorded Route" and #recordedDeliveryRoute > 0 then
+				if not runCharacterAlongRecordedRoute(character, spotPart.Position, currentToken) then
+					return false
+				end
+			else
+				if not runCharacterToPosition(character, spotPart.Position, 7, currentToken) then
+					return false
+				end
 			end
 
 			local timeoutAt = os.clock() + 8
@@ -2800,6 +3037,11 @@ function HyakuAsura.init(_context)
 			Default = false,
 		})
 
+		autoFarmGroup:AddToggle("RecordDeliveryRouteEnabled", {
+			Text = "Record Delivery Route",
+			Default = false,
+		})
+
 		local deliveryFarmOptions = autoFarmGroup:AddDependencyBox()
 		deliveryFarmOptions:SetupDependencies({
 			{ Toggles.DeliveryFarmEnabled, true },
@@ -2814,6 +3056,41 @@ function HyakuAsura.init(_context)
 		})
 
 		deliveryFarmOptions:AddLabel("⚠ anything above 50 is bannable")
+
+		local deliveryRouteRecorderOptions = autoFarmGroup:AddDependencyBox()
+		deliveryRouteRecorderOptions:SetupDependencies({
+			{ Toggles.RecordDeliveryRouteEnabled, true },
+		})
+
+		deliveryRouteRecorderOptions:AddSlider("DeliveryRouteSampleDistance", {
+			Text = "Sample Distance",
+			Default = 8,
+			Min = 1,
+			Max = 25,
+			Rounding = 0,
+		})
+
+		deliveryRouteStatusLabel = deliveryRouteRecorderOptions:AddLabel("Recorded Route: 0 points")
+		deliveryRouteRecorderOptions:AddButton("Copy Recorded Route", function()
+			copyRecordedDeliveryRoute()
+		end)
+		deliveryRouteRecorderOptions:AddButton("Clear Recorded Route", function()
+			clearRecordedDeliveryRoute()
+		end)
+		loadRecordedDeliveryRoute()
+		updateDeliveryRouteStatusLabel()
+
+		local pathfindingDeliveryFarmOptions = autoFarmGroup:AddDependencyBox()
+		pathfindingDeliveryFarmOptions:SetupDependencies({
+			{ Toggles.PathfindingDeliveryFarmEnabled, true },
+		})
+
+		pathfindingDeliveryFarmOptions:AddDropdown("PathfindingDeliveryRouteMode", {
+			Text = "Route Mode",
+			Values = deliveryPathModes,
+			Default = "Direct Target",
+			Multi = false,
+		})
 
 		Toggles.DeliveryFarmEnabled:OnChanged(function(enabled)
 			if enabled then
@@ -2837,6 +3114,15 @@ function HyakuAsura.init(_context)
 			else
 				pathfindingDeliveryFarmToken += 1
 				stopDeliveryRunInput()
+			end
+		end)
+
+		Toggles.RecordDeliveryRouteEnabled:OnChanged(function(enabled)
+			if enabled then
+				startDeliveryRouteRecorder()
+			else
+				deliveryRouteRecorderToken += 1
+				updateDeliveryRouteStatusLabel()
 			end
 		end)
 
@@ -3021,6 +3307,7 @@ function HyakuAsura.init(_context)
 			stopModeratorDetector()
 			stopAntiAfk()
 			stopDeliveryRunInput()
+			deliveryRouteRecorderToken += 1
 			cancelDeliveryFarmTween()
 			destroyDeliveryFarmPlatform()
 			setSpeedBoostEnabled(false)
@@ -3053,6 +3340,12 @@ function HyakuAsura.init(_context)
 			end
 			if Toggles and Toggles.DeliveryFarmEnabled then
 				pcall(function() Toggles.DeliveryFarmEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.PathfindingDeliveryFarmEnabled then
+				pcall(function() Toggles.PathfindingDeliveryFarmEnabled:SetValue(false) end)
+			end
+			if Toggles and Toggles.RecordDeliveryRouteEnabled then
+				pcall(function() Toggles.RecordDeliveryRouteEnabled:SetValue(false) end)
 			end
 			if Toggles and Toggles.AutoBenchEnabled then
 				pcall(function() Toggles.AutoBenchEnabled:SetValue(false) end)
