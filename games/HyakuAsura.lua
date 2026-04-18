@@ -15,7 +15,6 @@ local Players, MarketplaceService, ReplicatedStorage, RunService, UserInputServi
 	"VirtualInputManager"
 )
 local HttpService = game:GetService("HttpService")
-local PathfindingService = game:GetService("PathfindingService")
 local TeleportService = game:GetService("TeleportService")
 local TweenService = game:GetService("TweenService")
 
@@ -337,6 +336,7 @@ function HyakuAsura.init(_context)
 		local autoSleepInProgress = false
 		local autoEatInProgress = false
 		local antiAfkConnection = nil
+		local deliveryRunWHeld = false
 		local cachedBenchPromptFrame = nil
 		local lastBenchVisibleKey = nil
 		local lastBenchPromptScanAt = 0
@@ -1511,91 +1511,122 @@ function HyakuAsura.init(_context)
 				and Toggles.PathfindingDeliveryFarmEnabled.Value == true
 		end
 
-		local function walkCharacterToPosition(character, targetPosition, stopDistance)
-			local humanoid = character and getCharacterHumanoid(character)
+		local function setDeliveryRunKeyHeld(held)
+			if deliveryRunWHeld == held or not VirtualInputManager then
+				deliveryRunWHeld = held
+				return held
+			end
+
+			pcall(function()
+				VirtualInputManager:SendKeyEvent(held, Enum.KeyCode.W, false, game)
+			end)
+			deliveryRunWHeld = held
+			return held
+		end
+
+		local function stopDeliveryRunInput()
+			setDeliveryRunKeyHeld(false)
+		end
+
+		local function startDeliveryRunInput()
+			if not VirtualInputManager then
+				return false
+			end
+
+			stopDeliveryRunInput()
+			pcall(function()
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+				task.wait(0.03)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+				task.wait(0.03)
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+				task.wait(0.03)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+				task.wait(0.03)
+			end)
+			setDeliveryRunKeyHeld(true)
+			return true
+		end
+
+		local function runCharacterToPosition(character, targetPosition, stopDistance, currentToken)
 			local root = character and getCharacterRoot(character)
-			if not humanoid or not root or not targetPosition then
+			if not root or not targetPosition then
 				return false
 			end
 
 			stopDistance = math.max(tonumber(stopDistance) or 6, 2)
 			local stopDistanceSquared = stopDistance * stopDistance
-
 			local initialOffset = root.Position - targetPosition
 			if initialOffset:Dot(initialOffset) <= stopDistanceSquared then
 				return true
 			end
 
-			local path = PathfindingService:CreatePath({
-				AgentRadius = 2,
-				AgentHeight = 5,
-				AgentCanJump = true,
-				AgentCanClimb = true,
-				WaypointSpacing = 4,
-			})
+			local staminaLowThreshold = 20
+			local staminaRecoveryThreshold = 95
+			local timeoutAt = os.clock() + 30
+			startDeliveryRunInput()
 
-			local computed = pcall(function()
-				path:ComputeAsync(root.Position, targetPosition)
-			end)
-
-			if not computed or path.Status ~= Enum.PathStatus.Success then
-				humanoid:MoveTo(targetPosition)
-				local fallbackDeadline = os.clock() + 6
-				while os.clock() < fallbackDeadline do
-					local currentRoot = getCharacterRoot(character)
-					if not currentRoot then
-						return false
-					end
-
-					local offset = currentRoot.Position - targetPosition
-					if offset:Dot(offset) <= stopDistanceSquared then
-						return true
-					end
-
-					task.wait(0.1)
+			while os.clock() < timeoutAt do
+				if currentToken and not isPathfindingDeliveryFarmActive(currentToken) then
+					stopDeliveryRunInput()
+					return false
 				end
 
-				return false
-			end
-
-			for _, waypoint in ipairs(path:GetWaypoints()) do
 				local currentRoot = getCharacterRoot(character)
 				if not currentRoot then
+					stopDeliveryRunInput()
 					return false
 				end
 
 				local currentOffset = currentRoot.Position - targetPosition
 				if currentOffset:Dot(currentOffset) <= stopDistanceSquared then
+					stopDeliveryRunInput()
 					return true
 				end
 
-				if waypoint.Action == Enum.PathWaypointAction.Jump then
-					humanoid.Jump = true
+				local staminaValue = getStaminaValue()
+				local staminaNumber = staminaValue and tonumber(staminaValue.Value)
+				if staminaNumber and staminaNumber <= staminaLowThreshold then
+					stopDeliveryRunInput()
+					local recoveryDeadline = os.clock() + 10
+					while os.clock() < recoveryDeadline do
+						if currentToken and not isPathfindingDeliveryFarmActive(currentToken) then
+							return false
+						end
+
+						local liveStaminaValue = getStaminaValue()
+						local liveStaminaNumber = liveStaminaValue and tonumber(liveStaminaValue.Value)
+						if liveStaminaNumber and liveStaminaNumber >= staminaRecoveryThreshold then
+							break
+						end
+						task.wait(0.1)
+					end
+					startDeliveryRunInput()
 				end
 
-				humanoid:MoveTo(waypoint.Position)
-				local reached = humanoid.MoveToFinished:Wait()
-				if not reached then
-					return false
+				local flatTarget = Vector3.new(targetPosition.X, currentRoot.Position.Y, targetPosition.Z)
+				pcall(function()
+					currentRoot.CFrame = CFrame.lookAt(currentRoot.Position, flatTarget)
+				end)
+
+				if not deliveryRunWHeld then
+					startDeliveryRunInput()
 				end
+
+				task.wait(0.05)
 			end
 
-			local finalRoot = getCharacterRoot(character)
-			if not finalRoot then
-				return false
-			end
-
-			local finalOffset = finalRoot.Position - targetPosition
-			return finalOffset:Dot(finalOffset) <= stopDistanceSquared
+			stopDeliveryRunInput()
+			return false
 		end
 
-		local function startPathfindingDeliveryQuest(character)
+		local function startPathfindingDeliveryQuest(character, currentToken)
 			if hasActiveDeliveryEffect() or getActiveDeliverySpot() then
 				return true
 			end
 
 			local boardPosition = deliveryQuestStartCFrame.Position
-			if not walkCharacterToPosition(character, boardPosition, 8) then
+			if not runCharacterToPosition(character, boardPosition, 8, currentToken) then
 				return false
 			end
 
@@ -1612,12 +1643,12 @@ function HyakuAsura.init(_context)
 			return false
 		end
 
-		local function runPathfindingDeliveryToSpot(character, spotPart)
+		local function runPathfindingDeliveryToSpot(character, spotPart, currentToken)
 			if not character or not spotPart then
 				return false
 			end
 
-			if not walkCharacterToPosition(character, spotPart.Position, 7) then
+			if not runCharacterToPosition(character, spotPart.Position, 7, currentToken) then
 				return false
 			end
 
@@ -2547,14 +2578,14 @@ function HyakuAsura.init(_context)
 					local deliveryActive = hasActiveDeliveryEffect() or getActiveDeliverySpot() ~= nil
 					local activeSpot = getActiveDeliverySpot()
 					if not deliveryActive then
-						startPathfindingDeliveryQuest(character)
+						startPathfindingDeliveryQuest(character, currentToken)
 						task.wait(0.4)
 						deliveryActive = hasActiveDeliveryEffect() or getActiveDeliverySpot() ~= nil
 						activeSpot = getActiveDeliverySpot()
 					end
 
 					if deliveryActive and activeSpot then
-						runPathfindingDeliveryToSpot(character, activeSpot)
+						runPathfindingDeliveryToSpot(character, activeSpot, currentToken)
 						task.wait(0.2)
 					else
 						task.wait(0.5)
@@ -2805,6 +2836,7 @@ function HyakuAsura.init(_context)
 				startPathfindingDeliveryFarm()
 			else
 				pathfindingDeliveryFarmToken += 1
+				stopDeliveryRunInput()
 			end
 		end)
 
@@ -2988,6 +3020,7 @@ function HyakuAsura.init(_context)
 			disconnectTrainingPromptListeners()
 			stopModeratorDetector()
 			stopAntiAfk()
+			stopDeliveryRunInput()
 			cancelDeliveryFarmTween()
 			destroyDeliveryFarmPlatform()
 			setSpeedBoostEnabled(false)
