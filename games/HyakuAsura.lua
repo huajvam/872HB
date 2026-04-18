@@ -1727,6 +1727,13 @@ function HyakuAsura.init(_context)
 
 		local function stopDeliveryRunInput()
 			setDeliveryRunKeyHeld(false)
+			local character = LocalPlayer and LocalPlayer.Character
+			local humanoid = character and getCharacterHumanoid(character)
+			if humanoid then
+				pcall(function()
+					humanoid:Move(Vector3.zero, false)
+				end)
+			end
 		end
 
 		local function startDeliveryRunInput()
@@ -1745,13 +1752,14 @@ function HyakuAsura.init(_context)
 				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
 				task.wait(0.03)
 			end)
-			setDeliveryRunKeyHeld(true)
+			deliveryRunWHeld = false
 			return true
 		end
 
 		local function runCharacterToPosition(character, targetPosition, stopDistance, currentToken)
+			local humanoid = character and getCharacterHumanoid(character)
 			local root = character and getCharacterRoot(character)
-			if not root or not targetPosition then
+			if not humanoid or not root or not targetPosition then
 				return false
 			end
 
@@ -1805,13 +1813,21 @@ function HyakuAsura.init(_context)
 					startDeliveryRunInput()
 				end
 
-				local flatTarget = Vector3.new(targetPosition.X, currentRoot.Position.Y, targetPosition.Z)
-				pcall(function()
-					currentRoot.CFrame = CFrame.lookAt(currentRoot.Position, flatTarget)
-				end)
-
-				if not deliveryRunWHeld then
-					startDeliveryRunInput()
+				local flatDelta = Vector3.new(
+					targetPosition.X - currentRoot.Position.X,
+					0,
+					targetPosition.Z - currentRoot.Position.Z
+				)
+				local flatMagnitudeSquared = flatDelta:Dot(flatDelta)
+				if flatMagnitudeSquared > 0.001 then
+					local worldDirection = flatDelta.Unit
+					pcall(function()
+						humanoid:Move(worldDirection, false)
+					end)
+				else
+					pcall(function()
+						humanoid:Move(Vector3.zero, false)
+					end)
 				end
 
 				task.wait(0.05)
