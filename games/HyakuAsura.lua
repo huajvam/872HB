@@ -3394,14 +3394,14 @@ local function getCurrentCamera()
 						end
 
 						teleportUnderground(activeSpot.Position)
-						task.wait(8)
+						task.wait(7)
 						if not isActive() then break end
 
 						pcall(function()
 							firetouchinterest(activeSpot, root, 0)
 						end)
 
-						task.wait(8)
+						task.wait(7)
 						if not isActive() then break end
 					end
 
