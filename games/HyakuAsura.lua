@@ -3314,21 +3314,43 @@ local function getCurrentCamera()
 				local humanoid = getCharacterHumanoid(character)
 				local platform = ensureDeliveryFarmPlatform(root)
 				local boardPos = configState.deliveryQuestStartCFrame.Position
+				local targetPos = boardPos
+
+				local disabledStates = {
+					Enum.HumanoidStateType.Freefall,
+					Enum.HumanoidStateType.FallingDown,
+					Enum.HumanoidStateType.GettingUp,
+					Enum.HumanoidStateType.Jumping,
+					Enum.HumanoidStateType.Running,
+					Enum.HumanoidStateType.RunningNoPhysics,
+					Enum.HumanoidStateType.Climbing,
+				}
 
 				if humanoid then
 					pcall(function()
+						for _, state in ipairs(disabledStates) do
+							humanoid:SetStateEnabled(state, false)
+						end
 						humanoid.PlatformStand = true
 						humanoid:ChangeState(Enum.HumanoidStateType.Physics)
 					end)
 				end
 
-				local function teleportUnderground(pos)
+				local stabilityConnection = RunService.Heartbeat:Connect(function()
+					if not root or not root.Parent then return end
 					pcall(function()
-						root.CFrame = CFrame.new(pos.X, pos.Y - 7, pos.Z)
+						root.CFrame = CFrame.new(targetPos.X, targetPos.Y - 10, targetPos.Z)
 						if platform and platform.Parent then
-							platform.CFrame = CFrame.new(pos.X, pos.Y - 10.5, pos.Z)
+							platform.CFrame = CFrame.new(targetPos.X, targetPos.Y - 13.5, targetPos.Z)
+						end
+						if humanoid then
+							humanoid.PlatformStand = true
 						end
 					end)
+				end)
+
+				local function teleportUnderground(pos)
+					targetPos = pos
 				end
 
 				teleportUnderground(boardPos)
@@ -3339,14 +3361,6 @@ local function getCurrentCamera()
 					if not character or not root then
 						task.wait(0.5)
 						continue
-					end
-
-					humanoid = getCharacterHumanoid(character)
-					if humanoid and not humanoid.PlatformStand then
-						pcall(function()
-							humanoid.PlatformStand = true
-							humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-						end)
 					end
 
 					if not hasActiveDeliveryEffect() and not getActiveDeliverySpot() then
@@ -3397,8 +3411,13 @@ local function getCurrentCamera()
 					task.wait(0.3)
 				end
 
+				stabilityConnection:Disconnect()
+
 				if humanoid then
 					pcall(function()
+						for _, state in ipairs(disabledStates) do
+							humanoid:SetStateEnabled(state, true)
+						end
 						humanoid.PlatformStand = false
 						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 					end)
