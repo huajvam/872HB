@@ -3323,32 +3323,12 @@ local function getCurrentCamera()
 				end
 
 				local function teleportUnderground(pos)
-					local savedStates = {}
-					for _, desc in ipairs(character:GetDescendants()) do
-						if desc:IsA("BasePart") then
-							savedStates[desc] = desc.CanCollide
-							desc.CanCollide = false
-						end
-					end
-
 					pcall(function()
-						root.Anchored = false
-						root.AssemblyLinearVelocity = Vector3.zero
-						root.AssemblyAngularVelocity = Vector3.zero
-						root.CFrame = CFrame.new(pos.X, pos.Y - 10, pos.Z)
-						root.Anchored = true
+						root.CFrame = CFrame.new(pos.X, pos.Y - 7, pos.Z)
 						if platform and platform.Parent then
-							platform.CFrame = CFrame.new(pos.X, pos.Y - 13.5, pos.Z)
+							platform.CFrame = CFrame.new(pos.X, pos.Y - 10.5, pos.Z)
 						end
 					end)
-
-					task.wait()
-
-					for desc, state in pairs(savedStates) do
-						if desc and desc.Parent then
-							desc.CanCollide = state
-						end
-					end
 				end
 
 				teleportUnderground(boardPos)
@@ -3417,9 +3397,6 @@ local function getCurrentCamera()
 					task.wait(0.3)
 				end
 
-				pcall(function()
-					root.Anchored = false
-				end)
 				if humanoid then
 					pcall(function()
 						humanoid.PlatformStand = false
