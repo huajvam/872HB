@@ -3649,16 +3649,6 @@ function HyakuAsura.init(_context)
 			Default = false,
 		})
 
-		uiGroups.autoFarm:AddToggle("PathfindingDeliveryFarmEnabled", {
-			Text = "Pathfinding Delivery Farm",
-			Default = false,
-		})
-
-		uiGroups.autoFarm:AddToggle("RecordDeliveryRouteEnabled", {
-			Text = "Record Delivery Route",
-			Default = false,
-		})
-
 		do
 			local options = uiGroups.autoFarm:AddDependencyBox()
 			options:SetupDependencies({
@@ -3676,78 +3666,13 @@ function HyakuAsura.init(_context)
 			options:AddLabel("anything above 50 is bannable")
 		end
 
-		do
-			local options = uiGroups.autoFarm:AddDependencyBox()
-			options:SetupDependencies({
-				{ Toggles.RecordDeliveryRouteEnabled, true },
-			})
-
-			options:AddSlider("DeliveryRouteSampleDistance", {
-				Text = "Sample Distance",
-				Default = 8,
-				Min = 1,
-				Max = 25,
-				Rounding = 0,
-			})
-
-			deliveryRecorderState.statusLabel = options:AddLabel("Recorded Route: 0 points")
-			options:AddButton("Copy Recorded Route", function()
-				copyRecordedDeliveryRoute()
-			end)
-			options:AddButton("Clear Recorded Route", function()
-				clearRecordedDeliveryRoute()
-			end)
-		end
-		loadRecordedDeliveryRoute()
-		loadRecordedDeliveryMacro()
-		updateDeliveryRouteStatusLabel()
-
-		do
-			local options = uiGroups.autoFarm:AddDependencyBox()
-			options:SetupDependencies({
-				{ Toggles.PathfindingDeliveryFarmEnabled, true },
-			})
-
-			options:AddDropdown("PathfindingDeliveryRouteMode", {
-				Text = "Route Mode",
-				Values = configState.deliveryPathModes,
-				Default = "Direct Target",
-				Multi = false,
-			})
-		end
-
 		Toggles.DeliveryFarmEnabled:OnChanged(function(enabled)
 			if enabled then
-				if Toggles.PathfindingDeliveryFarmEnabled and Toggles.PathfindingDeliveryFarmEnabled.Value then
-					Toggles.PathfindingDeliveryFarmEnabled:SetValue(false)
-				end
 				startDeliveryFarm()
 			else
 				runtimeState.deliveryFarmToken += 1
 				cancelDeliveryFarmTween()
 				destroyDeliveryFarmPlatform()
-			end
-		end)
-
-		Toggles.PathfindingDeliveryFarmEnabled:OnChanged(function(enabled)
-			if enabled then
-				if Toggles.DeliveryFarmEnabled and Toggles.DeliveryFarmEnabled.Value then
-					Toggles.DeliveryFarmEnabled:SetValue(false)
-				end
-				startPathfindingDeliveryFarm()
-			else
-				runtimeState.pathfindingDeliveryFarmToken += 1
-				stopDeliveryRunInput()
-				resetDeliveryMacroPlaybackInputs()
-			end
-		end)
-
-		Toggles.RecordDeliveryRouteEnabled:OnChanged(function(enabled)
-			if enabled then
-				startDeliveryRouteRecorder()
-			else
-				runtimeState.deliveryRouteRecorderToken += 1
-				updateDeliveryRouteStatusLabel()
 			end
 		end)
 
