@@ -3311,11 +3311,26 @@ local function getCurrentCamera()
 					return
 				end
 
-				local collisionStates = setCharacterDeliveryPhysics(character, true)
+				local humanoid = getCharacterHumanoid(character)
 				local platform = ensureDeliveryFarmPlatform(root)
 				local boardPos = configState.deliveryQuestStartCFrame.Position
 
+				if humanoid then
+					pcall(function()
+						humanoid.PlatformStand = true
+						humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+					end)
+				end
+
 				local function teleportUnderground(pos)
+					local savedStates = {}
+					for _, desc in ipairs(character:GetDescendants()) do
+						if desc:IsA("BasePart") then
+							savedStates[desc] = desc.CanCollide
+							desc.CanCollide = false
+						end
+					end
+
 					pcall(function()
 						root.AssemblyLinearVelocity = Vector3.zero
 						root.AssemblyAngularVelocity = Vector3.zero
@@ -3324,6 +3339,14 @@ local function getCurrentCamera()
 							platform.CFrame = CFrame.new(pos.X, pos.Y - 18.5, pos.Z)
 						end
 					end)
+
+					task.wait()
+
+					for desc, state in pairs(savedStates) do
+						if desc and desc.Parent then
+							desc.CanCollide = state
+						end
+					end
 				end
 
 				teleportUnderground(boardPos)
@@ -3334,6 +3357,14 @@ local function getCurrentCamera()
 					if not character or not root then
 						task.wait(0.5)
 						continue
+					end
+
+					humanoid = getCharacterHumanoid(character)
+					if humanoid and not humanoid.PlatformStand then
+						pcall(function()
+							humanoid.PlatformStand = true
+							humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+						end)
 					end
 
 					if not hasActiveDeliveryEffect() and not getActiveDeliverySpot() then
@@ -3384,8 +3415,12 @@ local function getCurrentCamera()
 					task.wait(0.3)
 				end
 
-				restoreCharacterCollisionStates(collisionStates)
-				setCharacterDeliveryPhysics(character, false)
+				if humanoid then
+					pcall(function()
+						humanoid.PlatformStand = false
+						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end)
+				end
 				cancelDeliveryFarmTween()
 				destroyDeliveryFarmPlatform()
 			end)
