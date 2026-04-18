@@ -323,25 +323,33 @@ function HyakuAsura.init(_context)
 		local autoFarmGroup = Tabs.Main:AddLeftGroupbox("Auto Farm")
 		local autoTrainGroup = Tabs.Main:AddRightGroupbox("Auto Train")
 		local autoEatGroup = Tabs.Main:AddRightGroupbox("Auto Eat")
-		local infiniteRhythmLoopToken = 0
-		local deliveryFarmToken = 0
-		local pathfindingDeliveryFarmToken = 0
-		local deliveryRouteRecorderToken = 0
-		local autoBenchToken = 0
-		local autoPullUpToken = 0
-		local autoSquatMachineToken = 0
-		local autoTreadmillToken = 0
-		local autoBikeToken = 0
-		local autoBagsToken = 0
-		local autoSleepToken = 0
-		local autoEatToken = 0
-		local activeAutoBagModel = nil
-		local activeDeliveryFarmTween = nil
-		local activeDeliveryFarmPlatform = nil
-		local autoSleepInProgress = false
-		local autoEatInProgress = false
-		local antiAfkConnection = nil
-		local deliveryRunWHeld = false
+		local runtimeState = {
+			infiniteRhythmLoopToken = 0,
+			deliveryFarmToken = 0,
+			pathfindingDeliveryFarmToken = 0,
+			deliveryRouteRecorderToken = 0,
+			autoBenchToken = 0,
+			autoPullUpToken = 0,
+			autoSquatMachineToken = 0,
+			autoTreadmillToken = 0,
+			autoBikeToken = 0,
+			autoBagsToken = 0,
+			autoSleepToken = 0,
+			autoEatToken = 0,
+			activeAutoBagModel = nil,
+			activeDeliveryFarmTween = nil,
+			activeDeliveryFarmPlatform = nil,
+			autoSleepInProgress = false,
+			autoEatInProgress = false,
+			antiAfkConnection = nil,
+			deliveryRunWHeld = false,
+			cachedBenchPromptFrame = nil,
+			lastBenchVisibleKey = nil,
+			lastBenchPromptScanAt = 0,
+			moderatorDetectorConnection = nil,
+			rhythmChargeConnection = nil,
+			staminaConnection = nil,
+		}
 		local savedDeliveryRoute = {
 		}
 		local recordedDeliveryRoute = table.clone and table.clone(savedDeliveryRoute) or {}
@@ -369,10 +377,6 @@ function HyakuAsura.init(_context)
 				MouseButton2 = true,
 			},
 		}
-		local cachedBenchPromptFrame = nil
-		local lastBenchVisibleKey = nil
-		local lastBenchPromptScanAt = 0
-		local moderatorDetectorConnection = nil
 		local moderatorUserIds = {
 			[1915395703] = 999,
 			[4488906362] = 999,
@@ -393,18 +397,89 @@ function HyakuAsura.init(_context)
 			[4081878593] = 200,
 			[1015246692] = 200,
 		}
-		local trainingUiRemote = ReplicatedStorage
-			and ReplicatedStorage:FindFirstChild("Remotes")
-			and ReplicatedStorage.Remotes:FindFirstChild("TrainingUi")
-		local activeTrainingPromptRemote = nil
-		local trainingPromptRemoteConnection = nil
-		local trainingUiRemoteConnection = nil
-		local trainingPromptQueue = {}
-		local trainingPromptSequence = 0
-		local lastTrainingPromptKey = nil
-		local lastTrainingPromptAt = 0
-		local rhythmChargeConnection
-		local staminaConnection
+		local trainingPromptState = {
+			uiRemote = ReplicatedStorage
+				and ReplicatedStorage:FindFirstChild("Remotes")
+				and ReplicatedStorage.Remotes:FindFirstChild("TrainingUi"),
+			activeRemote = nil,
+			remoteConnection = nil,
+			uiConnection = nil,
+			queue = {},
+			sequence = 0,
+			lastKey = nil,
+			lastAt = 0,
+		}
+		local stateBridgeMap = {
+			infiniteRhythmLoopToken = { runtimeState, "infiniteRhythmLoopToken" },
+			deliveryFarmToken = { runtimeState, "deliveryFarmToken" },
+			pathfindingDeliveryFarmToken = { runtimeState, "pathfindingDeliveryFarmToken" },
+			deliveryRouteRecorderToken = { runtimeState, "deliveryRouteRecorderToken" },
+			autoBenchToken = { runtimeState, "autoBenchToken" },
+			autoPullUpToken = { runtimeState, "autoPullUpToken" },
+			autoSquatMachineToken = { runtimeState, "autoSquatMachineToken" },
+			autoTreadmillToken = { runtimeState, "autoTreadmillToken" },
+			autoBikeToken = { runtimeState, "autoBikeToken" },
+			autoBagsToken = { runtimeState, "autoBagsToken" },
+			autoSleepToken = { runtimeState, "autoSleepToken" },
+			autoEatToken = { runtimeState, "autoEatToken" },
+			activeAutoBagModel = { runtimeState, "activeAutoBagModel" },
+			activeDeliveryFarmTween = { runtimeState, "activeDeliveryFarmTween" },
+			activeDeliveryFarmPlatform = { runtimeState, "activeDeliveryFarmPlatform" },
+			autoSleepInProgress = { runtimeState, "autoSleepInProgress" },
+			autoEatInProgress = { runtimeState, "autoEatInProgress" },
+			antiAfkConnection = { runtimeState, "antiAfkConnection" },
+			deliveryRunWHeld = { runtimeState, "deliveryRunWHeld" },
+			cachedBenchPromptFrame = { runtimeState, "cachedBenchPromptFrame" },
+			lastBenchVisibleKey = { runtimeState, "lastBenchVisibleKey" },
+			lastBenchPromptScanAt = { runtimeState, "lastBenchPromptScanAt" },
+			moderatorDetectorConnection = { runtimeState, "moderatorDetectorConnection" },
+			rhythmChargeConnection = { runtimeState, "rhythmChargeConnection" },
+			staminaConnection = { runtimeState, "staminaConnection" },
+			trainingUiRemote = { trainingPromptState, "uiRemote" },
+			activeTrainingPromptRemote = { trainingPromptState, "activeRemote" },
+			trainingPromptRemoteConnection = { trainingPromptState, "remoteConnection" },
+			trainingUiRemoteConnection = { trainingPromptState, "uiConnection" },
+			trainingPromptQueue = { trainingPromptState, "queue" },
+			trainingPromptSequence = { trainingPromptState, "sequence" },
+			lastTrainingPromptKey = { trainingPromptState, "lastKey" },
+			lastTrainingPromptAt = { trainingPromptState, "lastAt" },
+		}
+		local currentEnv = getfenv and getfenv() or _G
+		if type(currentEnv) == "table" then
+			local envMeta = getmetatable(currentEnv) or {}
+			local originalIndex = envMeta.__index
+			local originalNewIndex = envMeta.__newindex
+			envMeta.__index = function(env, key)
+				local mappedState = stateBridgeMap[key]
+				if mappedState then
+					return mappedState[1][mappedState[2]]
+				end
+				if type(originalIndex) == "function" then
+					return originalIndex(env, key)
+				end
+				if type(originalIndex) == "table" then
+					return originalIndex[key]
+				end
+				return rawget(env, key)
+			end
+			envMeta.__newindex = function(env, key, value)
+				local mappedState = stateBridgeMap[key]
+				if mappedState then
+					mappedState[1][mappedState[2]] = value
+					return
+				end
+				if type(originalNewIndex) == "function" then
+					originalNewIndex(env, key, value)
+					return
+				end
+				if type(originalNewIndex) == "table" then
+					originalNewIndex[key] = value
+					return
+				end
+				rawset(env, key, value)
+			end
+			setmetatable(currentEnv, envMeta)
+		end
 		local autoEatFoodNames = {
 			"Pizza",
 			"Kebab",
@@ -544,7 +619,7 @@ function HyakuAsura.init(_context)
 				return remote
 			end
 
-			return activeTrainingPromptRemote
+			return trainingPromptState.activeRemote
 		end
 
 		local function getSpeedBoostValue()
@@ -4456,3 +4531,4 @@ function HyakuAsura.init(_context)
 end
 
 return HyakuAsura
+
