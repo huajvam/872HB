@@ -3419,7 +3419,7 @@ local function getCurrentCamera()
 
 				if root and root.Parent then
 					pcall(function()
-						root.CFrame = CFrame.new(boardPos.X, boardPos.Y + 5, boardPos.Z)
+						root.CFrame = CFrame.new(targetPos.X, targetPos.Y + 5, targetPos.Z)
 					end)
 				end
 
