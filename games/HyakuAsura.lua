@@ -3312,12 +3312,12 @@ local function getCurrentCamera()
 				end
 
 				local humanoid = getCharacterHumanoid(character)
-				local boardUndergroundYOffset = 20   -- studs below boardPos.Y while at the questboard
-				local deliveryUndergroundYOffset = 12 -- studs below spot.Y while at a delivery spot
+				local boardUndergroundY = 5    -- absolute Y the character sits at near the questboard
+				local deliveryUndergroundY = 10 -- absolute Y the character sits at near delivery spots
 				local platform = ensureDeliveryFarmPlatform(root)
 				local boardPos = configState.deliveryQuestStartCFrame.Position
 				local targetPos = boardPos
-				local atBoard = true  -- switches which offset the Heartbeat uses
+				local atBoard = true  -- switches which Y the Heartbeat uses
 
 				local disabledStates = {
 					Enum.HumanoidStateType.Freefall,
@@ -3352,11 +3352,11 @@ local function getCurrentCamera()
 				local stabilityConnection = RunService.Heartbeat:Connect(function()
 					if not root or not root.Parent then return end
 					pcall(function()
-						local yOffset = atBoard and boardUndergroundYOffset or deliveryUndergroundYOffset
-						root.CFrame = CFrame.new(targetPos.X, targetPos.Y - yOffset, targetPos.Z)
+						local y = atBoard and boardUndergroundY or deliveryUndergroundY
+						root.CFrame = CFrame.new(targetPos.X, y, targetPos.Z)
 						root.CanCollide = false
 						if platform and platform.Parent then
-							platform.CFrame = CFrame.new(targetPos.X, targetPos.Y - yOffset - 3.5, targetPos.Z)
+							platform.CFrame = CFrame.new(targetPos.X, y - 3.5, targetPos.Z)
 						end
 						if humanoid then
 							humanoid.PlatformStand = true
@@ -3472,7 +3472,8 @@ local function getCurrentCamera()
 
 				if root and root.Parent then
 					pcall(function()
-						root.CFrame = CFrame.new(targetPos.X, targetPos.Y + 5, targetPos.Z)
+						-- Surface is roughly boardPos.Y; bring the player back up to it
+						root.CFrame = CFrame.new(targetPos.X, boardPos.Y + 3, targetPos.Z)
 					end)
 				end
 
