@@ -4231,6 +4231,155 @@ local function getCurrentCamera()
 				end
 			end)
 		end
+
+		-- Stat Predictor
+		do
+			local predictorGroup = Tabs.Stats:AddLeftGroupbox("Stat Predictor")
+
+			local predictableStats = {
+				"Agility",
+				"StaminaInStat",
+				"AttackSpeed",
+				"Durability",
+				"LowerMuscle",
+				"UpperMuscle",
+				"Strength",
+				"Muscle",
+				"Fat",
+				"TotalPower",
+			}
+
+			predictorGroup:AddDropdown("PredictorStat", {
+				Text    = "Select Stat",
+				Values  = predictableStats,
+				Default = 1,
+			})
+
+			predictorGroup:AddInput("PredictorTarget", {
+				Text    = "Target Value",
+				Default = "1000",
+				Numeric = true,
+			})
+
+			local predCurrentLabel  = predictorGroup:AddLabel("Current: —")
+			local predNeededLabel   = predictorGroup:AddLabel("Needed: —")
+			local predAvgLabel      = predictorGroup:AddLabel("Avg Gain/Session: —")
+			local predSessionsLabel = predictorGroup:AddLabel("Est. Sessions: —")
+			local predSamplesLabel  = predictorGroup:AddLabel("Samples: 0 / 30")
+
+			local MAX_SAMPLES          = 30
+			local gainHistory          = {}   -- recorded gain per completed session
+			local sessionBuffer        = 0    -- accumulates rapid stat ticks into one session
+			local sessionBufferDeadline = 0
+			local statConnection       = nil
+			local connectedStatsFolder = nil
+			local lastStatValue        = nil
+
+			local function commitBuffer()
+				if sessionBuffer > 0 then
+					table.insert(gainHistory, sessionBuffer)
+					if #gainHistory > MAX_SAMPLES then
+						table.remove(gainHistory, 1)
+					end
+					sessionBuffer = 0
+				end
+			end
+
+			local function onStatChanged(newValue)
+				if lastStatValue == nil then
+					lastStatValue = newValue
+					return
+				end
+				local delta = newValue - lastStatValue
+				lastStatValue = newValue
+				if delta <= 0 then return end
+				-- Flush old buffer if the last tick was over 2 seconds ago
+				if sessionBuffer > 0 and os.clock() > sessionBufferDeadline then
+					commitBuffer()
+				end
+				sessionBuffer = sessionBuffer + delta
+				sessionBufferDeadline = os.clock() + 2
+			end
+
+			local function connectToStat()
+				if statConnection then
+					pcall(function() statConnection:Disconnect() end)
+					statConnection = nil
+				end
+				gainHistory           = {}
+				sessionBuffer         = 0
+				lastStatValue         = nil
+				connectedStatsFolder  = nil
+
+				local statName    = Options.PredictorStat and Options.PredictorStat.Value
+				local statsFolder = getLocalEntityStatsFolder()
+				if not statsFolder or not statName then return end
+
+				connectedStatsFolder = statsFolder
+				local nv = statsFolder:FindFirstChild(statName)
+				if not nv or not nv:IsA("NumberValue") then return end
+
+				lastStatValue  = nv.Value
+				statConnection = nv.Changed:Connect(onStatChanged)
+			end
+
+			Options.PredictorStat:OnChanged(connectToStat)
+			task.defer(connectToStat)
+
+			-- Display + reconnect loop
+			task.spawn(function()
+				while true do
+					-- Flush stale buffer
+					if sessionBuffer > 0 and os.clock() > sessionBufferDeadline then
+						commitBuffer()
+					end
+
+					-- Reconnect if the stats folder changed (respawn etc.)
+					local statsFolder = getLocalEntityStatsFolder()
+					if statsFolder ~= connectedStatsFolder then
+						connectToStat()
+					end
+
+					local statName = Options.PredictorStat and Options.PredictorStat.Value
+					local nv       = statsFolder and statName and statsFolder:FindFirstChild(statName)
+					local current  = nv and nv:IsA("NumberValue") and nv.Value
+					local target   = tonumber(Options.PredictorTarget and Options.PredictorTarget.Value)
+
+					predCurrentLabel:SetText(current ~= nil
+						and ("Current: " .. formatStatNumber(current))
+						or  "Current: —")
+
+					if current ~= nil and target then
+						local needed = math.max(target - current, 0)
+						predNeededLabel:SetText("Needed: " .. formatStatNumber(needed))
+
+						if needed <= 0 then
+							predSessionsLabel:SetText("Est. Sessions: Already there!")
+							predAvgLabel:SetText("Avg Gain/Session: —")
+						elseif #gainHistory >= 1 then
+							local sum = 0
+							for _, v in ipairs(gainHistory) do sum = sum + v end
+							local avg = sum / #gainHistory
+							predSessionsLabel:SetText(string.format(
+								"Est. Sessions: ~%d", math.ceil(needed / avg)))
+							predAvgLabel:SetText("Avg Gain/Session: " .. formatStatNumber(avg))
+						else
+							predSessionsLabel:SetText("Est. Sessions: Need data...")
+							predAvgLabel:SetText("Avg Gain/Session: training...")
+						end
+					else
+						predNeededLabel:SetText("Needed: —")
+						predSessionsLabel:SetText("Est. Sessions: —")
+						predAvgLabel:SetText("Avg Gain/Session: —")
+					end
+
+					predSamplesLabel:SetText(string.format(
+						"Samples: %d / %d", #gainHistory, MAX_SAMPLES))
+
+					task.wait(0.2)
+				end
+			end)
+		end
 	end
 
 	do
