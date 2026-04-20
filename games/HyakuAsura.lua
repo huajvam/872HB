@@ -4089,8 +4089,8 @@ local function getCurrentCamera()
 				and pg.PlayerList.Playlist:FindFirstChild("ScrollingFrame")
 			if scrollFrame then
 				for _, entry in ipairs(scrollFrame:GetChildren()) do
-					if entry:IsA("Frame") then
-						local nameLabel = entry:FindFirstChild("NAME")
+					if entry:IsA("GuiObject") then
+						local nameLabel = entry:FindFirstChild("NAME", true)
 						if nameLabel and nameLabel:IsA("TextLabel") then
 							table.insert(targets, nameLabel)
 						end
