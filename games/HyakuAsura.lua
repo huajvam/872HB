@@ -4066,6 +4066,69 @@ local function getCurrentCamera()
 				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServerId, LocalPlayer)
 			end)
 		end)
+
+		local hiderGroup = Tabs.Misc:AddLeftGroupbox("Hider")
+
+		local originalHiderTexts = {}
+
+		local function getHiderTargets()
+			local pg = LocalPlayer.PlayerGui
+			return {
+				pg:FindFirstChild("Main")
+					and pg.Main:FindFirstChild("GlobalFrame")
+					and pg.Main.GlobalFrame:FindFirstChild("Main")
+					and pg.Main.GlobalFrame.Main:FindFirstChild("CharacterName"),
+
+				pg:FindFirstChild("PlayerList")
+					and pg.PlayerList:FindFirstChild("Playlist")
+					and pg.PlayerList.Playlist:FindFirstChild("ScrollingFrame")
+					and pg.PlayerList.Playlist.ScrollingFrame:FindFirstChild(LocalPlayer.Name)
+					and pg.PlayerList.Playlist.ScrollingFrame[LocalPlayer.Name]:FindFirstChild("NAME"),
+
+				pg:FindFirstChild("serverthingy")
+					and pg.serverthingy:FindFirstChild("Frame")
+					and pg.serverthingy.Frame:FindFirstChild("servername"),
+
+				pg:FindFirstChild("serverthingy")
+					and pg.serverthingy:FindFirstChild("Frame")
+					and pg.serverthingy.Frame:FindFirstChild("region"),
+			}
+		end
+
+		local function applyServerHider(enabled)
+			local targets = getHiderTargets()
+			for _, label in ipairs(targets) do
+				if label and label:IsA("TextLabel") then
+					if enabled then
+						if not originalHiderTexts[label] then
+							originalHiderTexts[label] = label.Text
+						end
+						label.Text = "Huaj Hub"
+					else
+						if originalHiderTexts[label] then
+							label.Text = originalHiderTexts[label]
+							originalHiderTexts[label] = nil
+						end
+					end
+				end
+			end
+		end
+
+		hiderGroup:AddToggle("ServerHiderEnabled", { Text = "Server Hider", Default = false })
+
+		Toggles.ServerHiderEnabled:OnChanged(function(enabled)
+			applyServerHider(enabled)
+		end)
+
+		-- Re-apply every 0.5s in case the GUI reloads or labels reset
+		task.spawn(function()
+			while true do
+				if Toggles.ServerHiderEnabled and Toggles.ServerHiderEnabled.Value then
+					applyServerHider(true)
+				end
+				task.wait(0.5)
+			end
+		end)
 	end
 
 	do
