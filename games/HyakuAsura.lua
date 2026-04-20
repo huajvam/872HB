@@ -4082,15 +4082,18 @@ local function getCurrentCamera()
 				and pg.Main.GlobalFrame.Main:FindFirstChild("CharacterName")
 			if charName then table.insert(targets, charName) end
 
-			-- NAME label for every player entry in the PlayerList ScrollingFrame
+			-- NAME label inside every player frame in the PlayerList ScrollingFrame
+			-- Structure: ScrollingFrame -> [Frame per player e.g. "Anto2232"] -> NAME (TextLabel)
 			local scrollFrame = pg:FindFirstChild("PlayerList")
 				and pg.PlayerList:FindFirstChild("Playlist")
 				and pg.PlayerList.Playlist:FindFirstChild("ScrollingFrame")
 			if scrollFrame then
 				for _, entry in ipairs(scrollFrame:GetChildren()) do
-					local nameLabel = entry:FindFirstChild("NAME")
-					if nameLabel then
-						table.insert(targets, nameLabel)
+					if entry:IsA("Frame") or entry:IsA("GuiObject") then
+						local nameLabel = entry:FindFirstChild("NAME")
+						if nameLabel and nameLabel:IsA("TextLabel") then
+							table.insert(targets, nameLabel)
+						end
 					end
 				end
 			end
