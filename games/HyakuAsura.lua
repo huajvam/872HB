@@ -2851,18 +2851,11 @@ local function getCurrentCamera()
 							connectTrainingPromptListeners(spotRemote)
 							clearTrainingPromptQueue()
 
-							-- Teleport to spot then sink player 8 studs underground
+							-- Teleport to spot
 							teleportCharacterToTrainingSpot(character, spotModel)
 							task.wait(0.35)
 							if not isAutoTrainLoopActive(toggleKey, currentToken) then
 								break
-							end
-
-							local trainingRoot = getCharacterRoot(character)
-							if trainingRoot then
-								pcall(function()
-									trainingRoot.CFrame = trainingRoot.CFrame * CFrame.new(0, -8, 0)
-								end)
 							end
 
 							if options.HoldEBeforeStart then
@@ -3570,16 +3563,8 @@ local function getCurrentCamera()
 								end
 								disconnectTrainingPromptListeners()
 
-								-- Teleport to bed then sink player 8 studs underground
 								teleportCharacterToTrainingSpot(character, bedModel)
 								task.wait(0.35)
-
-								local sleepRoot = getCharacterRoot(character)
-								if sleepRoot then
-									pcall(function()
-										sleepRoot.CFrame = sleepRoot.CFrame * CFrame.new(0, -8, 0)
-									end)
-								end
 
 								local bedSeatPrompt = getTrainingSpotSeatPrompt(bedFolder)
 								if bedSeatPrompt then
