@@ -4360,6 +4360,44 @@ local function getCurrentCamera()
 				getToggleValue("EspShowHealthText", false) and humanoid ~= nil
 			)
 
+			do
+				-- Yen In Bank (from nil-parented Player data)
+				local yenInBankAmount = nil
+				if getToggleValue("EspShowYenInBank", false) and targetType == "player" then
+					pcall(function()
+						for _, v in next, getnilinstances() do
+							if v.ClassName == "Player" and v.Name == model.Name then
+								yenInBankAmount = v.Currencies.YenInBank.Value
+								break
+							end
+						end
+					end)
+				end
+				entry:setText(
+					entry.yenText,
+					yenInBankAmount ~= nil and string.format("Yen In Bank:%d", yenInBankAmount) or "",
+					Vector2.new(box.left + (box.width * 0.5), box.top - 40),
+					getToggleValue("EspShowYenInBank", false) and targetType == "player" and yenInBankAmount ~= nil
+				)
+
+				-- Player Yen (from live Players service)
+				local playerYenAmount = nil
+				if getToggleValue("EspShowPlayerYen", false) and targetType == "player" then
+					pcall(function()
+						local plr = game:GetService("Players"):FindFirstChild(model.Name)
+						if plr then
+							playerYenAmount = plr.Currencies.Yen.Value
+						end
+					end)
+				end
+				entry:setText(
+					entry.playerYenText,
+					playerYenAmount ~= nil and string.format("Player Yen:%d", playerYenAmount) or "",
+					Vector2.new(box.left + (box.width * 0.5), box.top - 53),
+					getToggleValue("EspShowPlayerYen", false) and targetType == "player" and playerYenAmount ~= nil
+				)
+			end
+
 			entry:setTracer(tracerStart, tracerEnd, accentColor, getToggleValue("EspShowTracers", false))
 
 			if getToggleValue("EspShowSkeleton", false) then
@@ -4433,6 +4471,8 @@ local function getCurrentCamera()
 		espVisualGroup:AddToggle("EspShowNames", { Text = "Show Names", Default = true })
 		espVisualGroup:AddToggle("EspShowDistance", { Text = "Show Distance", Default = true })
 		espVisualGroup:AddToggle("EspShowHealthText", { Text = "Show Health Text", Default = false })
+		espVisualGroup:AddToggle("EspShowYenInBank", { Text = "See Yen in Bank", Default = false })
+		espVisualGroup:AddToggle("EspShowPlayerYen", { Text = "See Player Yen", Default = false })
 		espVisualGroup:AddToggle("EspShowHealthBar", { Text = "Show Health Bar", Default = true })
 		espVisualGroup:AddToggle("EspShowBox", { Text = "Box ESP", Default = true })
 		espVisualGroup:AddToggle("EspShowSkeleton", { Text = "Skeleton ESP", Default = false })
@@ -4446,6 +4486,8 @@ local function getCurrentCamera()
 		Toggles.EspShowNames:OnChanged(refreshEsp)
 		Toggles.EspShowDistance:OnChanged(refreshEsp)
 		Toggles.EspShowHealthText:OnChanged(refreshEsp)
+		Toggles.EspShowYenInBank:OnChanged(refreshEsp)
+		Toggles.EspShowPlayerYen:OnChanged(refreshEsp)
 		Toggles.EspShowHealthBar:OnChanged(refreshEsp)
 		Toggles.EspShowBox:OnChanged(refreshEsp)
 		Toggles.EspShowTracers:OnChanged(refreshEsp)
