@@ -124,6 +124,28 @@ function EntityESP.new(registry, accentColor, shuttingDownFlag)
 	}, shuttingDownFlag)
 	table.insert(self.objects, self.healthText)
 
+	self.yenText = EntityESP.createDrawing(registry, "Text", {
+		Center = true,
+		Outline = true,
+		Size = 13,
+		Font = 2,
+		Transparency = 1,
+		Color = Color3.fromRGB(255, 215, 0),
+		Visible = false,
+	}, shuttingDownFlag)
+	table.insert(self.objects, self.yenText)
+
+	self.playerYenText = EntityESP.createDrawing(registry, "Text", {
+		Center = true,
+		Outline = true,
+		Size = 13,
+		Font = 2,
+		Transparency = 1,
+		Color = Color3.fromRGB(255, 215, 0),
+		Visible = false,
+	}, shuttingDownFlag)
+	table.insert(self.objects, self.playerYenText)
+
 	self.staminaText = EntityESP.createDrawing(registry, "Text", {
 		Center = true,
 		Outline = true,
@@ -300,6 +322,12 @@ function EntityESP:hide()
 	end
 	if self.healthText then
 		self.healthText.Visible = false
+	end
+	if self.yenText then
+		self.yenText.Visible = false
+	end
+	if self.playerYenText then
+		self.playerYenText.Visible = false
 	end
 	if self.staminaText then
 		self.staminaText.Visible = false
