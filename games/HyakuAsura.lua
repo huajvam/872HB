@@ -28,7 +28,6 @@ local HUAJ_HUB_HYAKU_LIBRARY_KEY = "__huaj_hub_hyaku_library_v1"
 local HUAJ_HUB_HYAKU_ESP_DRAWINGS_KEY = "__huaj_hub_hyaku_esp_drawings_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_HOOK_KEY = "__huaj_hub_hyaku_remote_block_hook_v1"
 local HUAJ_HUB_HYAKU_REMOTE_BLOCK_CALLBACK_KEY = "__huaj_hub_hyaku_remote_block_callback_v1"
-local HYAKU_RHYTHM_REMOTE_INTERVAL = 0.03
 local HYAKU_PROMPT_SCAN_INTERVAL = 0.12
 
 local LocalPlayer = Players.LocalPlayer
@@ -326,7 +325,6 @@ function HyakuAsura.init(_context)
 			autoEat = Tabs.Main:AddRightGroupbox("Auto Eat"),
 		}
 		local runtimeState = {
-			infiniteRhythmLoopToken = 0,
 			deliveryFarmToken = 0,
 			pathfindingDeliveryFarmToken = 0,
 			deliveryRouteRecorderToken = 0,
@@ -349,7 +347,6 @@ function HyakuAsura.init(_context)
 			lastBenchVisibleKey = nil,
 			lastBenchPromptScanAt = 0,
 			moderatorDetectorConnection = nil,
-			rhythmChargeConnection = nil,
 			staminaConnection = nil,
 		}
 		local deliveryRouteState = {
@@ -466,34 +463,6 @@ function HyakuAsura.init(_context)
 			},
 		}
 
-		local function getRhythmInputRemote()
-			local character = LocalPlayer and LocalPlayer.Character
-			if not character then
-				return nil
-			end
-
-			local mainScript = character:FindFirstChild("MainScript")
-			if not mainScript then
-				return nil
-			end
-
-			local inputRemote = mainScript:FindFirstChild("Input")
-			if inputRemote and inputRemote:IsA("RemoteEvent") then
-				return inputRemote
-			end
-
-			return nil
-		end
-
-		local function getRhythmChargeValue()
-			local statsFolder = getLocalEntityStatsFolder()
-			local rhythmCharge = statsFolder and statsFolder:FindFirstChild("RhythmCharge")
-			if rhythmCharge and rhythmCharge:IsA("NumberValue") then
-				return rhythmCharge
-			end
-
-			return nil
-		end
 
 		local function getStaminaValue()
 			local statsFolder = getLocalEntityStatsFolder()
@@ -566,26 +535,6 @@ function HyakuAsura.init(_context)
 			return nil
 		end
 
-		local function applyInfiniteRhythmCharge()
-			local rhythmCharge = getRhythmChargeValue()
-			if not rhythmCharge then
-				return false
-			end
-
-			pcall(function()
-				rhythmCharge.Value = 100
-			end)
-			return true
-		end
-
-		local function stopInfiniteRhythmChargeHook()
-			if runtimeState.rhythmChargeConnection then
-				pcall(function()
-					runtimeState.rhythmChargeConnection:Disconnect()
-				end)
-				runtimeState.rhythmChargeConnection = nil
-			end
-		end
 
 		local function applyInfiniteStamina()
 			local stamina = getStaminaValue()
@@ -684,64 +633,6 @@ function HyakuAsura.init(_context)
 			end)
 		end
 
-		local function startInfiniteRhythmChargeHook()
-			stopInfiniteRhythmChargeHook()
-			local rhythmCharge = getRhythmChargeValue()
-			if not rhythmCharge then
-				return
-			end
-
-			applyInfiniteRhythmCharge()
-			runtimeState.rhythmChargeConnection = rhythmCharge:GetPropertyChangedSignal("Value"):Connect(function()
-				if Toggles and Toggles.InfiniteRhythmEnabled and Toggles.InfiniteRhythmEnabled.Value then
-					applyInfiniteRhythmCharge()
-				end
-			end)
-		end
-
-		local function fireInfiniteRhythmRemote(isDown)
-			local inputRemote = getRhythmInputRemote()
-			if not inputRemote then
-				return false
-			end
-
-			local payload = {
-				{
-					KeyInfo = {
-						Direction = "None",
-						Name = "R",
-						Airborne = false,
-					},
-					IsDown = isDown == nil and true or isDown,
-				},
-			}
-
-			pcall(function()
-				inputRemote:FireServer(unpack(payload))
-			end)
-
-			return true
-		end
-
-		local function startInfiniteRhythmLoop()
-			runtimeState.infiniteRhythmLoopToken += 1
-			local currentToken = runtimeState.infiniteRhythmLoopToken
-			startInfiniteRhythmChargeHook()
-			task.spawn(function()
-				fireInfiniteRhythmRemote(true)
-				while currentToken == runtimeState.infiniteRhythmLoopToken and Toggles.InfiniteRhythmEnabled and Toggles.InfiniteRhythmEnabled.Value do
-					fireInfiniteRhythmRemote(true)
-					applyInfiniteRhythmCharge()
-					task.wait(HYAKU_RHYTHM_REMOTE_INTERVAL)
-				end
-			end)
-		end
-
-		local function stopInfiniteRhythmLoop()
-			runtimeState.infiniteRhythmLoopToken += 1
-			stopInfiniteRhythmChargeHook()
-			fireInfiniteRhythmRemote(false)
-		end
 
 		-- Auto Train Automation Module
 		local function getTrainingSpotTeleportModel(spotFolder)
@@ -3691,17 +3582,6 @@ local function getCurrentCamera()
 			end)
 		end
 
-		uiGroups.localCheats:AddToggle("InfiniteRhythmEnabled", {
-			Text = "Infinite Rhythm",
-			Default = false,
-		}):OnChanged(function(enabled)
-			if enabled then
-				startInfiniteRhythmLoop()
-			else
-				stopInfiniteRhythmLoop()
-			end
-		end)
-
 		uiGroups.localCheats:AddToggle("InfiniteStaminaEnabled", {
 			Text = "Infinite Stamina",
 			Default = false,
@@ -3940,7 +3820,6 @@ local function getCurrentCamera()
 		end)
 
 		registerLibraryUnloadCallback(function()
-			stopInfiniteRhythmLoop()
 			stopInfiniteStaminaHook()
 			disconnectTrainingPromptListeners()
 			stopModeratorDetector()
@@ -3963,9 +3842,6 @@ local function getCurrentCamera()
 			runtimeState.activeAutoBagModel = nil
 			runtimeState.autoSleepInProgress = false
 			runtimeState.autoEatInProgress = false
-			if Toggles and Toggles.InfiniteRhythmEnabled then
-				pcall(function() Toggles.InfiniteRhythmEnabled:SetValue(false) end)
-			end
 			if Toggles and Toggles.InfiniteStaminaEnabled then
 				pcall(function() Toggles.InfiniteStaminaEnabled:SetValue(false) end)
 			end
