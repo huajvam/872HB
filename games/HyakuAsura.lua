@@ -4838,6 +4838,7 @@ local function getCurrentCamera()
 		SaveManager:SetFolder("HuajHub/" .. GAME_KEY)
 		SaveManager:BuildConfigSection(Tabs.Settings)
 		ThemeManager:ApplyToTab(Tabs.Settings)
+		SaveManager:LoadAutoloadConfig()
 
 		local menuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
 		menuGroup:AddButton("Unload", function() Library:Unload() end)
