@@ -600,6 +600,36 @@ function MSKen.init(_context)
 				return best
 			end
 
+			-- Dot counts recorded just before each fire; a trail whose dots
+			-- appeared since then is the one the game just drew, i.e. the
+			-- objective the game wants next.
+			local trailDotCounts = {}
+
+			local function snapshotTrailDots()
+				trailDotCounts = {}
+				for _, folder in ipairs(getTrailFolders()) do
+					trailDotCounts[folder.Name] = #getCompassDots(folder)
+				end
+			end
+
+			local function findFreshTrail()
+				for _, folder in ipairs(getTrailFolders()) do
+					if not visitedTrails[folder.Name]
+						and (trailDotCounts[folder.Name] or 0) == 0
+						and #getCompassDots(folder) > 0 then
+						return folder
+					end
+				end
+
+				return nil
+			end
+
+			local function getQuestProgress()
+				local label = findRestockQuestLabel()
+				local done = label and label.Text:match("(%d+)%s*/")
+				return tonumber(done)
+			end
+
 			-- Stock pickup + 12 spots, with headroom for retries.
 			local MAX_CYCLES = 20
 
@@ -614,30 +644,39 @@ function MSKen.init(_context)
 					break
 				end
 
-				-- Trails for the spots spawn shortly after the Stock click (and
-				-- their dots can stream in late), so poll instead of giving up
-				-- on the first empty look.
+				-- Prefer the trail whose dots appeared since the last fire —
+				-- that's the objective the game is pointing at right now. Only
+				-- fall back to the lowest-numbered leftover if no fresh trail
+				-- shows up within a few seconds.
 				local trailFolder = nil
-				local trailDeadline = os.clock() + 10
+				local freshDeadline = os.clock() + 3
+				local trailDeadline = os.clock() + 12
 				while os.clock() < trailDeadline do
 					if isCancelled() then
 						return false, "cancelled"
 					end
 
-					trailFolder = pickNextTrail()
+					trailFolder = findFreshTrail()
 					if trailFolder then
+						logFarm("following the game's new trail: " .. trailFolder.Name)
 						break
+					end
+
+					if os.clock() > freshDeadline then
+						trailFolder = pickNextTrail()
+						if trailFolder then
+							logFarm("no fresh trail appeared; falling back to " .. trailFolder.Name)
+							break
+						end
 					end
 
 					task.wait(0.2)
 				end
 
 				if not trailFolder then
-					logFarm("no unvisited compass trail appeared within 10s; route done")
+					logFarm("no compass trail appeared within 12s; route done")
 					break
 				end
-
-				logFarm("following trail: " .. trailFolder.Name)
 				local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
 				if not moved then
 					return false, moveError
@@ -682,12 +721,39 @@ function MSKen.init(_context)
 					local questLabel = findRestockQuestLabel()
 					logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
 					logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
+
+					local progressBefore = getQuestProgress()
+					snapshotTrailDots()
 					firedParts[target] = true
 					fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
-					-- Brief settle for the click to register; the next cycle
-					-- already polls for the next trail, so no long wait is
-					-- needed here.
+					-- For spot clicks, wait until the server actually counts the
+					-- restock before moving on.
+					if target.Name ~= "Stock" and progressBefore ~= nil then
+						local counted = false
+						local countDeadline = os.clock() + 6
+						while os.clock() < countDeadline do
+							if isCancelled() then
+								return false, "cancelled"
+							end
+
+							local progressNow = getQuestProgress()
+							if progressNow and progressNow > progressBefore then
+								counted = true
+								break
+							end
+
+							task.wait(0.2)
+						end
+
+						if counted then
+							logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
+						else
+							logFarm("quest counter did NOT increase after that fire - the server rejected it")
+						end
+					end
+
+					-- Brief settle before hunting the next trail.
 					if not sleepUnlessCancelled(randomRange(0.8, 1.9), isCancelled) then
 						return false, "cancelled"
 					end
