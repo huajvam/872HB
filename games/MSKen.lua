@@ -576,23 +576,38 @@ function MSKen.init(_context)
 				return candidates[1].part, candidates[1].distance
 			end
 
-			-- Dot counts recorded just before each fire; a trail whose dots
-			-- appeared since then is the one the game just drew, i.e. the
-			-- objective the game wants next. This is the ONLY navigation
-			-- signal used - guessing trails is what caused invalid clicks.
-			local trailDotCounts = {}
+			-- Dot instances recorded just before each fire; a trail containing
+			-- any dot the snapshot has never seen is the one the game just
+			-- drew, i.e. the objective it wants next. Instances, not counts:
+			-- the game can redraw a trail by swapping its dots for new ones
+			-- with the same count. This is the ONLY navigation signal used -
+			-- guessing trails is what caused invalid clicks.
+			local trailDotSnapshot = {}
 
 			local function snapshotTrailDots()
-				trailDotCounts = {}
+				trailDotSnapshot = {}
 				for _, folder in ipairs(getTrailFolders()) do
-					trailDotCounts[folder.Name] = #getCompassDots(folder)
+					local seen = {}
+					for _, child in ipairs(folder:GetChildren()) do
+						seen[child] = true
+					end
+					trailDotSnapshot[folder.Name] = seen
 				end
 			end
 
 			local function findFreshTrail()
 				for _, folder in ipairs(getTrailFolders()) do
-					if (trailDotCounts[folder.Name] or 0) == 0 and #getCompassDots(folder) > 0 then
-						return folder
+					if #getCompassDots(folder) > 0 then
+						local seen = trailDotSnapshot[folder.Name]
+						if not seen then
+							return folder
+						end
+
+						for _, child in ipairs(folder:GetChildren()) do
+							if not seen[child] then
+								return folder
+							end
+						end
 					end
 				end
 
@@ -640,6 +655,15 @@ function MSKen.init(_context)
 				end
 
 				if not trailFolder then
+					local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
+					if compass then
+						local contents = {}
+						for _, child in ipairs(compass:GetChildren()) do
+							table.insert(contents, ("%s(%d)"):format(child.Name, #child:GetChildren()))
+						end
+						logFarm("CompassPaths contents at timeout: " .. table.concat(contents, ", "))
+					end
+
 					logFarm("no new compass trail appeared within 12s; route done")
 					break
 				end
