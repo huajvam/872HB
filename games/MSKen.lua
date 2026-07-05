@@ -333,6 +333,10 @@ local function walkTo(position, isCancelled)
 	return false, "timeout"
 end
 
+local function randomRange(minimum, maximum)
+	return minimum + math.random() * (maximum - minimum)
+end
+
 local function sleepUnlessCancelled(duration, isCancelled)
 	local deadline = os.clock() + duration
 
@@ -587,8 +591,9 @@ function MSKen.init(_context)
 				end
 
 				-- Stand at the part for a moment before firing, like a player
-				-- lining up the click.
-				if not sleepUnlessCancelled(2, isCancelled) then
+				-- lining up the click. Randomized: metronome-perfect intervals
+				-- are what interaction anti-cheats look for.
+				if not sleepUnlessCancelled(randomRange(1.6, 3.4), isCancelled) then
 					return false, "cancelled"
 				end
 
@@ -597,7 +602,7 @@ function MSKen.init(_context)
 
 				-- Brief settle for the click to register; the next cycle already
 				-- polls for the next trail, so no long wait is needed here.
-				if not sleepUnlessCancelled(1, isCancelled) then
+				if not sleepUnlessCancelled(randomRange(0.8, 1.9), isCancelled) then
 					return false, "cancelled"
 				end
 			end
@@ -752,7 +757,7 @@ function MSKen.init(_context)
 
 					-- Breathe between jobs; a bit longer after a failure so a
 					-- broken state doesn't spam retries.
-					if not sleepUnlessCancelled(ok and 2 or 5, isCancelled) then
+					if not sleepUnlessCancelled(ok and randomRange(2.5, 6) or randomRange(5, 9), isCancelled) then
 						break
 					end
 				end
