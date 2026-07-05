@@ -314,14 +314,25 @@ local function walkTo(position, isCancelled)
 			return true
 		end
 
-		-- Flag it if W is held but the character isn't actually moving; that
-		-- means the key input isn't reaching the game.
+		-- If W is held but the character stops making progress, it's snagged
+		-- on something - hop over it like a player would.
 		if lastPosition == nil or (root.Position - lastPosition).Magnitude > 0.5 then
 			lastPosition = root.Position
 			lastProgressAt = os.clock()
-		elseif wKeyHeld and not stallReported and os.clock() - lastProgressAt > 2 then
-			stallReported = true
-			logFarm("W is held but the character is not moving - key input may not be reaching the game")
+		elseif wKeyHeld and os.clock() - lastProgressAt > 1.5 then
+			if not stallReported then
+				stallReported = true
+				logFarm("movement stalled; jumping to get unstuck")
+			end
+
+			local character = LocalPlayer and LocalPlayer.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.Jump = true
+			end
+
+			-- Give the jump a moment to carry before judging progress again.
+			lastProgressAt = os.clock()
 		end
 
 		steerCameraToward(position)
@@ -589,26 +600,44 @@ function MSKen.init(_context)
 					return false, "no clickable job part near the end of the path"
 				end
 
-				-- Get within the detector's activation range first.
-				if targetDistance > 5 then
+				-- Get within the detector's activation range, measured from the
+				-- character itself.
+				local root = getCharacterRoot()
+				local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
+				if clickDistance > 5 then
 					walkTo(target.Position, isCancelled)
 					setWKeyHeld(false)
+					root = getCharacterRoot()
+					clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
 				end
 
-				-- Stand at the part for a moment before firing, like a player
-				-- lining up the click. Randomized: metronome-perfect intervals
-				-- are what interaction anti-cheats look for.
-				if not sleepUnlessCancelled(randomRange(1.6, 3.4), isCancelled) then
+				if isCancelled() then
 					return false, "cancelled"
 				end
 
-				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), targetDistance))
-				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
+				if clickDistance > 5.5 then
+					-- Firing from outside the 6 stud range is exactly what
+					-- causes the "invalid click" kick - never risk it. Unmark
+					-- the trail so the next cycle walks it again instead.
+					logFarm(("still %.1f studs from %s; skipping this click and retrying the trail"):format(clickDistance, target.Name))
+					visitedTrails[trailFolder.Name] = nil
+				else
+					-- Stand at the part for a moment before firing, like a player
+					-- lining up the click. Randomized: metronome-perfect intervals
+					-- are what interaction anti-cheats look for.
+					if not sleepUnlessCancelled(randomRange(1.6, 3.4), isCancelled) then
+						return false, "cancelled"
+					end
 
-				-- Brief settle for the click to register; the next cycle already
-				-- polls for the next trail, so no long wait is needed here.
-				if not sleepUnlessCancelled(randomRange(0.8, 1.9), isCancelled) then
-					return false, "cancelled"
+					logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
+					fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
+
+					-- Brief settle for the click to register; the next cycle
+					-- already polls for the next trail, so no long wait is
+					-- needed here.
+					if not sleepUnlessCancelled(randomRange(0.8, 1.9), isCancelled) then
+						return false, "cancelled"
+					end
 				end
 			end
 
