@@ -154,6 +154,27 @@ local function setWKeyHeld(held)
 	end)
 end
 
+-- The default camera scripts overwrite CFrame writes every frame, so steering
+-- only sticks while the camera is Scriptable; saved type is restored after.
+local savedCameraType = nil
+
+local function setFarmCameraActive(active)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
+	if active then
+		if savedCameraType == nil then
+			savedCameraType = camera.CameraType
+		end
+		camera.CameraType = Enum.CameraType.Scriptable
+	elseif savedCameraType ~= nil then
+		camera.CameraType = savedCameraType
+		savedCameraType = nil
+	end
+end
+
 local function steerCameraToward(position)
 	local camera = workspace.CurrentCamera
 	local root = getCharacterRoot()
@@ -167,12 +188,19 @@ local function steerCameraToward(position)
 		return
 	end
 
-	local cameraPosition = camera.CFrame.Position
-	camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + look.Unit)
+	look = look.Unit
+
+	-- Third-person chase view: behind and above the player, facing the target,
+	-- so held W (camera-relative) runs straight at it.
+	local cameraPosition = root.Position - look * 10 + Vector3.new(0, 6, 0)
+	camera.CFrame = CFrame.lookAt(cameraPosition, root.Position + look * 5)
 end
 
 local function walkTo(position, isCancelled)
 	local deadline = os.clock() + 10
+	local lastPosition = nil
+	local lastProgressAt = os.clock()
+	local stallReported = false
 
 	while os.clock() < deadline do
 		if isCancelled and isCancelled() then
@@ -191,6 +219,16 @@ local function walkTo(position, isCancelled)
 		if flatDistance <= 3 then
 			-- W stays held between dots so the run is one smooth motion.
 			return true
+		end
+
+		-- Flag it if W is held but the character isn't actually moving; that
+		-- means the key input isn't reaching the game.
+		if lastPosition == nil or (root.Position - lastPosition).Magnitude > 0.5 then
+			lastPosition = root.Position
+			lastProgressAt = os.clock()
+		elseif wKeyHeld and not stallReported and os.clock() - lastProgressAt > 2 then
+			stallReported = true
+			logFarm("W is held but the character is not moving - key input may not be reaching the game")
 		end
 
 		steerCameraToward(position)
@@ -253,6 +291,7 @@ function MSKen.init(_context)
 	Library:OnUnload(function()
 		runtimeState.moneyFarmToken += 1
 		setWKeyHeld(false)
+		setFarmCameraActive(false)
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_INIT_KEY] = nil
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_LIBRARY_KEY] = nil
 	end)
@@ -290,6 +329,7 @@ function MSKen.init(_context)
 			end
 
 			logFarm("restock route started; following the compass path")
+			setFarmCameraActive(true)
 
 			-- Walks the compass dots starting from the one closest to the player,
 			-- heading toward whichever end of the trail is farther away (the
@@ -542,6 +582,7 @@ function MSKen.init(_context)
 
 				local ok, message = runMoneyFarmSequence(isCancelled)
 				setWKeyHeld(false)
+				setFarmCameraActive(false)
 				if ok then
 					Library:Notify("Money Farm: restock route complete", 3)
 				elseif message ~= "cancelled" then
