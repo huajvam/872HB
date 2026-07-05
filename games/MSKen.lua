@@ -576,33 +576,10 @@ function MSKen.init(_context)
 				return candidates[1].part, candidates[1].distance
 			end
 
-			-- Each trail is followed once, in numeric order: Path_Stocker (the
-			-- Stock box) first, then Path_Stocker_1 through Path_Stocker_12.
-			local visitedTrails = {}
-
-			local function trailOrder(folder)
-				local suffix = folder.Name:match("_(%d+)$")
-				return suffix and tonumber(suffix) or 0
-			end
-
-			local function pickNextTrail()
-				local best, bestOrder = nil, math.huge
-
-				for _, folder in ipairs(getTrailFolders()) do
-					if not visitedTrails[folder.Name] and #getCompassDots(folder) > 0 then
-						local order = trailOrder(folder)
-						if order < bestOrder then
-							best, bestOrder = folder, order
-						end
-					end
-				end
-
-				return best
-			end
-
 			-- Dot counts recorded just before each fire; a trail whose dots
 			-- appeared since then is the one the game just drew, i.e. the
-			-- objective the game wants next.
+			-- objective the game wants next. This is the ONLY navigation
+			-- signal used - guessing trails is what caused invalid clicks.
 			local trailDotCounts = {}
 
 			local function snapshotTrailDots()
@@ -614,9 +591,7 @@ function MSKen.init(_context)
 
 			local function findFreshTrail()
 				for _, folder in ipairs(getTrailFolders()) do
-					if not visitedTrails[folder.Name]
-						and (trailDotCounts[folder.Name] or 0) == 0
-						and #getCompassDots(folder) > 0 then
+					if (trailDotCounts[folder.Name] or 0) == 0 and #getCompassDots(folder) > 0 then
 						return folder
 					end
 				end
@@ -630,8 +605,9 @@ function MSKen.init(_context)
 				return tonumber(done)
 			end
 
-			-- Stock pickup + 12 spots, with headroom for retries.
-			local MAX_CYCLES = 20
+			-- Alternates Stock and spots as the game directs: up to 12 spots
+			-- plus a Stock visit before each one, with headroom for retries.
+			local MAX_CYCLES = 30
 
 			for cycle = 1, MAX_CYCLES do
 				if isCancelled() then
@@ -644,12 +620,10 @@ function MSKen.init(_context)
 					break
 				end
 
-				-- Prefer the trail whose dots appeared since the last fire —
-				-- that's the objective the game is pointing at right now. Only
-				-- fall back to the lowest-numbered leftover if no fresh trail
-				-- shows up within a few seconds.
+				-- Follow ONLY the trail the game draws (its dots appeared since
+				-- the last fire). The game alternates: stock trail, spot trail,
+				-- stock trail, ... - never guess ahead of it.
 				local trailFolder = nil
-				local freshDeadline = os.clock() + 3
 				local trailDeadline = os.clock() + 12
 				while os.clock() < trailDeadline do
 					if isCancelled() then
@@ -658,104 +632,96 @@ function MSKen.init(_context)
 
 					trailFolder = findFreshTrail()
 					if trailFolder then
-						logFarm("following the game's new trail: " .. trailFolder.Name)
+						logFarm("following the game's trail: " .. trailFolder.Name)
 						break
 					end
 
-					if os.clock() > freshDeadline then
-						trailFolder = pickNextTrail()
-						if trailFolder then
-							logFarm("no fresh trail appeared; falling back to " .. trailFolder.Name)
-							break
-						end
-					end
-
-					task.wait(0.2)
+					task.wait(0.15)
 				end
 
 				if not trailFolder then
-					logFarm("no compass trail appeared within 12s; route done")
+					logFarm("no new compass trail appeared within 12s; route done")
 					break
 				end
+
 				local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
 				if not moved then
 					return false, moveError
 				end
-
-				visitedTrails[trailFolder.Name] = true
 
 				local target, targetDistance = nearestClickTarget(trailEndPosition)
 				if not target then
 					return false, "no clickable job part near the end of the path"
 				end
 
-				-- Get within the detector's activation range, measured from the
-				-- character itself.
-				local root = getCharacterRoot()
-				local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
-				if clickDistance > 5 then
-					walkTo(target.Position, isCancelled)
-					setWKeyHeld(false)
-					root = getCharacterRoot()
-					clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
-				end
-
-				if isCancelled() then
-					return false, "cancelled"
-				end
-
-				if clickDistance > 5.5 then
-					-- Firing from outside the 6 stud range is exactly what
-					-- causes the "invalid click" kick - never risk it. Unmark
-					-- the trail so the next cycle walks it again instead.
-					logFarm(("still %.1f studs from %s; skipping this click and retrying the trail"):format(clickDistance, target.Name))
-					visitedTrails[trailFolder.Name] = nil
+				if targetDistance > 3.5 then
+					-- The nearest part is too far from the trail end to be this
+					-- trail's objective. Firing anything else is an invalid
+					-- click, so fire nothing and wait for the game's next trail.
+					logFarm(("%s is %.1f studs from the trail end - not the objective; skipping the fire"):format(target.Name, targetDistance))
 				else
-					-- Stand at the part for a moment before firing, like a player
-					-- lining up the click. Randomized: metronome-perfect intervals
-					-- are what interaction anti-cheats look for.
-					if not sleepUnlessCancelled(randomRange(1.6, 3.4), isCancelled) then
+					-- Get within the detector's activation range, measured from
+					-- the character itself.
+					local root = getCharacterRoot()
+					local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
+					if clickDistance > 5 then
+						walkTo(target.Position, isCancelled)
+						setWKeyHeld(false)
+						root = getCharacterRoot()
+						clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
+					end
+
+					if isCancelled() then
 						return false, "cancelled"
 					end
 
-					local questLabel = findRestockQuestLabel()
-					logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
-					logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
-
-					local progressBefore = getQuestProgress()
-					snapshotTrailDots()
-					firedParts[target] = true
-					fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
-
-					-- For spot clicks, wait until the server actually counts the
-					-- restock before moving on.
-					if target.Name ~= "Stock" and progressBefore ~= nil then
-						local counted = false
-						local countDeadline = os.clock() + 6
-						while os.clock() < countDeadline do
-							if isCancelled() then
-								return false, "cancelled"
-							end
-
-							local progressNow = getQuestProgress()
-							if progressNow and progressNow > progressBefore then
-								counted = true
-								break
-							end
-
-							task.wait(0.2)
+					if clickDistance > 5.5 then
+						-- Never fire from outside the 6 stud range.
+						logFarm(("still %.1f studs from %s; skipping this click"):format(clickDistance, target.Name))
+					else
+						-- Short human-like pause to line up the click.
+						if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
+							return false, "cancelled"
 						end
 
-						if counted then
-							logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
-						else
-							logFarm("quest counter did NOT increase after that fire - the server rejected it")
-						end
-					end
+						local questLabel = findRestockQuestLabel()
+						logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
+						logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
-					-- Brief settle before hunting the next trail.
-					if not sleepUnlessCancelled(randomRange(0.8, 1.9), isCancelled) then
-						return false, "cancelled"
+						local progressBefore = getQuestProgress()
+						snapshotTrailDots()
+						-- Spots are one-shot, but the Stock box is revisited
+						-- before every spot, so it stays fireable.
+						if target.Name ~= "Stock" then
+							firedParts[target] = true
+						end
+						fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
+
+						-- For spot clicks, wait until the server actually counts
+						-- the restock, then move on immediately.
+						if target.Name ~= "Stock" and progressBefore ~= nil then
+							local counted = false
+							local countDeadline = os.clock() + 6
+							while os.clock() < countDeadline do
+								if isCancelled() then
+									return false, "cancelled"
+								end
+
+								local progressNow = getQuestProgress()
+								if progressNow and progressNow > progressBefore then
+									counted = true
+									break
+								end
+
+								task.wait(0.15)
+							end
+
+							if counted then
+								logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
+							else
+								logFarm("quest counter did NOT increase after that fire - the server rejected it")
+							end
+						end
 					end
 				end
 			end
