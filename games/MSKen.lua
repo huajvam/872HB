@@ -27,6 +27,10 @@ local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
 -- is parked 4 studs below the target part: underground but still in range.
 local UNDERGROUND_DEPTH = 4
 
+local function logFarm(message)
+	warn("[HuajHub][MoneyFarm] " .. tostring(message))
+end
+
 local function findGuiElement(pathParts)
 	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
 	local current = playerGui
@@ -222,6 +226,8 @@ function MSKen.init(_context)
 				return false, "Spots folder not found"
 			end
 
+			logFarm("restock route started; moving under the Stock box")
+
 			local platform = Instance.new("Part")
 			platform.Name = "HuajHubFarmPlatform"
 			platform.Size = Vector3.new(8, 1, 8)
@@ -263,6 +269,7 @@ function MSKen.init(_context)
 					return false
 				end
 
+				logFarm("firing ClickDetector on " .. part:GetFullName())
 				fireclickdetector(detector)
 				return true
 			end
@@ -281,6 +288,7 @@ function MSKen.init(_context)
 				end
 
 				if spot:IsA("BasePart") and spot:FindFirstChildOfClass("ClickDetector") then
+					logFarm("moving under spot: " .. spot.Name)
 					if not moveUnderAndClick(spot) and isCancelled() then
 						return finish(false, "cancelled")
 					end
@@ -295,6 +303,8 @@ function MSKen.init(_context)
 		end
 
 		local function runMoneyFarmSequence(isCancelled)
+			logFarm("sequence started")
+
 			-- Equip the phone tool from the backpack if it isn't already in hand.
 			if not isPhoneEquipped() then
 				if not equipPhoneFromBackpack() then
@@ -328,6 +338,7 @@ function MSKen.init(_context)
 			if isCancelled() then
 				return false, "cancelled"
 			end
+			logFarm("phone equipped; clicking phone container")
 			clickGuiElement(phoneContainer)
 
 			local jobsButton = waitForGuiElement(JOBS_BUTTON_PATH, 5, isCancelled)
@@ -339,6 +350,7 @@ function MSKen.init(_context)
 			if isCancelled() then
 				return false, "cancelled"
 			end
+			logFarm("clicking the job frame for 3 seconds")
 			-- Click the job frame repeatedly for 3 seconds to make sure it registers,
 			-- then move on to the accept button.
 			local clickDeadline = os.clock() + 3
@@ -359,11 +371,15 @@ function MSKen.init(_context)
 			if isCancelled() then
 				return false, "cancelled"
 			end
+			logFarm("clicking the accept button")
 			clickGuiElement(acceptButton)
 
 			-- Verify the accepted job is the restock quest by checking the quest
-			-- tracker text.
+			-- tracker text. Matches on the "You still need to restock" prefix so
+			-- varying item counts don't break it; the exact-text constant stays as
+			-- documentation of the expected label.
 			local jobConfirmed = false
+			local lastQuestText = nil
 			local questDeadline = os.clock() + 5
 			while os.clock() < questDeadline do
 				if isCancelled() then
@@ -371,18 +387,24 @@ function MSKen.init(_context)
 				end
 
 				local questLabel = findGuiElement(QUEST_NAME_PATH)
-				if questLabel and questLabel.Text == TARGET_QUEST_TEXT then
-					jobConfirmed = true
-					break
+				if questLabel then
+					lastQuestText = questLabel.Text
+					if questLabel.Text == TARGET_QUEST_TEXT
+						or questLabel.Text:find("You still need to restock", 1, true) then
+						jobConfirmed = true
+						break
+					end
 				end
 
 				task.wait(0.1)
 			end
 
 			if not jobConfirmed then
+				logFarm("quest text never matched; last seen: " .. tostring(lastQuestText))
 				return false, "accepted job is not the restock quest"
 			end
 
+			logFarm("restock quest confirmed: " .. tostring(lastQuestText))
 			Library:Notify("Job Found!", 3)
 
 			return runRestockRoute(isCancelled)
