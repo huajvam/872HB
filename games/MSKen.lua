@@ -540,6 +540,43 @@ function MSKen.init(_context)
 				return tonumber(done)
 			end
 
+			-- Dot instances recorded just before each fire; a trail containing
+			-- any dot the snapshot has never seen is the one the game drew
+			-- after that click - its CURRENT target. The server validates
+			-- clicks against this, which is why picking our own order got
+			-- tolerated twice and then kicked, every time.
+			local trailDotSnapshot = {}
+
+			local function snapshotTrailDots()
+				trailDotSnapshot = {}
+				for _, folder in ipairs(getTrailFolders()) do
+					local seen = {}
+					for _, child in ipairs(folder:GetChildren()) do
+						seen[child] = true
+					end
+					trailDotSnapshot[folder.Name] = seen
+				end
+			end
+
+			local function findFreshTrail()
+				for _, folder in ipairs(getTrailFolders()) do
+					if #getCompassDots(folder) > 0 then
+						local seen = trailDotSnapshot[folder.Name]
+						if not seen then
+							return folder
+						end
+
+						for _, child in ipairs(folder:GetChildren()) do
+							if not seen[child] then
+								return folder
+							end
+						end
+					end
+				end
+
+				return nil
+			end
+
 			-- Only a part the player is basically standing on gets fired.
 			local SUPER_CLOSE_RANGE = 4
 
@@ -579,6 +616,7 @@ function MSKen.init(_context)
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
 				local progressBefore = getQuestProgress()
+				snapshotTrailDots()
 				firedParts[target] = true
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
@@ -615,17 +653,6 @@ function MSKen.init(_context)
 				return true
 			end
 
-			local function getTrailByIndex(index)
-				local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
-				return compass and compass:FindFirstChild(("%s_%d"):format(TRAIL_NAME_PREFIX, index)) or nil
-			end
-
-			local function getSpotByIndex(index)
-				local spotsFolder = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Spots" })
-				local children = spotsFolder and spotsFolder:GetChildren()
-				return children and children[index] or nil
-			end
-
 			local function clickStockOnce()
 				local stockPart = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Stock" })
 				if not (stockPart and stockPart:FindFirstChildOfClass("ClickDetector")) then
@@ -656,84 +683,71 @@ function MSKen.init(_context)
 				return approachAndFire(stockPart)
 			end
 
-			-- The job: click the Stock box ONCE, then click all 12 spots in
-			-- order. There is no returning to the Stock box.
+			-- The job: click the Stock box once, then keep following the trail
+			-- the game draws to its current target shelf and click that. The
+			-- game picks the order; overriding it is what earned the invalid
+			-- click strikes.
 			local stockClicked, stockError = clickStockOnce()
 			if not stockClicked then
 				return false, stockError
 			end
 
-			for spotIndex = 1, 12 do
+			for cycle = 1, 20 do
 				if isCancelled() then
 					return false, "cancelled"
 				end
 
 				-- Once the tracker stops showing the restock text the job is done.
-				if spotIndex > 1 and not findRestockQuestLabel() then
+				if not findRestockQuestLabel() then
 					logFarm("quest tracker no longer shows the restock text; route done")
 					break
 				end
 
-				-- Follow this spot's own trail if it has dots (waiting briefly
-				-- for them to stream in), otherwise walk directly to the spot.
-				local trailFolder = getTrailByIndex(spotIndex)
-				local dotsDeadline = os.clock() + 5
-				while os.clock() < dotsDeadline do
+				-- Hunt the trail the game drew after the last click.
+				local trailFolder = nil
+				local trailDeadline = os.clock() + 12
+				while os.clock() < trailDeadline do
 					if isCancelled() then
 						return false, "cancelled"
 					end
 
-					trailFolder = getTrailByIndex(spotIndex)
-					if trailFolder and #getCompassDots(trailFolder) > 0 then
+					trailFolder = findFreshTrail()
+					if trailFolder then
+						logFarm("following the game's trail: " .. trailFolder.Name)
 						break
 					end
 
 					task.wait(0.15)
 				end
 
-				-- Pick WHICH shelf to fire from the game's own signals: the
-				-- trail's final dot when there is one, or the indexed spot
-				-- part when there isn't. Never from player proximity.
-				local target = nil
-
-				if trailFolder and #getCompassDots(trailFolder) > 0 then
-					local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
-					if not moved then
-						return false, moveError
-					end
-
-					local candidate, candidateDistance = nearestUnfiredPartTo(trailEndPosition)
-					if candidate and candidateDistance <= 3.5 then
-						target = candidate
-					elseif candidate then
-						logFarm(("%s is %.1f studs from the trail's last dot - not the objective; not firing"):format(
-							candidate.Name, candidateDistance))
-					end
-				else
-					local spotPart = getSpotByIndex(spotIndex)
-					if not spotPart or not spotPart:IsA("BasePart") or not spotPart:FindFirstChildOfClass("ClickDetector") then
-						logFarm(("no trail and no usable spot part for #%d; skipping it"):format(spotIndex))
-					elseif firedParts[spotPart] then
-						logFarm(("spot #%d was already fired; skipping it"):format(spotIndex))
-					else
-						logFarm(("no dots for %s_%d; walking straight to spot #%d"):format(TRAIL_NAME_PREFIX, spotIndex, spotIndex))
-						walkTo(spotPart.Position, isCancelled)
-						setWKeyHeld(false)
-						setWalkTarget(nil)
-
-						if isCancelled() then
-							return false, "cancelled"
+				if not trailFolder then
+					local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
+					if compass then
+						local contents = {}
+						for _, child in ipairs(compass:GetChildren()) do
+							table.insert(contents, ("%s(%d)"):format(child.Name, #child:GetChildren()))
 						end
-
-						target = spotPart
+						logFarm("CompassPaths contents at timeout: " .. table.concat(contents, ", "))
 					end
+
+					logFarm("no new compass trail appeared within 12s; moving to the sweep")
+					break
 				end
 
-				if target then
+				local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
+				if not moved then
+					return false, moveError
+				end
+
+				local target, targetDistance = nearestUnfiredPartTo(trailEndPosition)
+				if target and targetDistance <= 3.5 then
 					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
+				elseif target then
+					logFarm(("%s is %.1f studs from the trail's last dot - not the objective; not firing"):format(
+						target.Name, targetDistance))
 				end
 			end
 
