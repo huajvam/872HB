@@ -24,8 +24,9 @@ local STOCK_PART_PATH = { "Jobs", "Restock", "JLF", "Stock" }
 local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
 
 -- The Stock/Spots ClickDetectors have a 6 stud activation range, so the player
--- is parked 4 studs below the target part: underground but still in range.
-local UNDERGROUND_DEPTH = 4
+-- is parked as deep below the target part as that range allows: underground but
+-- still close enough to fire the click.
+local UNDERGROUND_DEPTH = 5.5
 
 local function logFarm(message)
 	warn("[HuajHub][MoneyFarm] " .. tostring(message))
