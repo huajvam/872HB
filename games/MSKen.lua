@@ -582,6 +582,18 @@ function MSKen.init(_context)
 					return false, "no clickable job part near the end of the path"
 				end
 
+				-- Get within the detector's activation range first.
+				if targetDistance > 5 then
+					walkTo(target.Position, isCancelled)
+					setWKeyHeld(false)
+				end
+
+				-- Stand at the part for a few seconds before firing, like a
+				-- player lining up the click.
+				if not sleepUnlessCancelled(3, isCancelled) then
+					return false, "cancelled"
+				end
+
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), targetDistance))
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
