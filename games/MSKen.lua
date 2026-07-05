@@ -546,9 +546,26 @@ function MSKen.init(_context)
 					break
 				end
 
-				local trailFolder = pickClosestTrail()
+				-- Trails for the spots spawn shortly after the Stock click (and
+				-- their dots can stream in late), so poll instead of giving up
+				-- on the first empty look.
+				local trailFolder = nil
+				local trailDeadline = os.clock() + 10
+				while os.clock() < trailDeadline do
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					trailFolder = pickClosestTrail()
+					if trailFolder then
+						break
+					end
+
+					task.wait(0.2)
+				end
+
 				if not trailFolder then
-					logFarm("no unvisited compass trails left; route done")
+					logFarm("no unvisited compass trail appeared within 10s; route done")
 					break
 				end
 
@@ -568,7 +585,9 @@ function MSKen.init(_context)
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), targetDistance))
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
-				if not sleepUnlessCancelled(5, isCancelled) then
+				-- Brief settle for the click to register; the next cycle already
+				-- polls for the next trail, so no long wait is needed here.
+				if not sleepUnlessCancelled(1, isCancelled) then
 					return false, "cancelled"
 				end
 			end
