@@ -51,6 +51,21 @@ local function waitForGuiElement(pathParts, timeout, shouldCancel)
 	return nil
 end
 
+-- A GuiObject only renders when it and every ancestor up to the ScreenGui are
+-- visible, and the ScreenGui itself is enabled.
+local function isGuiElementVisible(element)
+	local current = element
+
+	while current and not current:IsA("ScreenGui") do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		current = current.Parent
+	end
+
+	return current ~= nil and current.Enabled == true
+end
+
 local function pressKey(keyCode)
 	VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 	task.wait(0.05)
@@ -116,11 +131,28 @@ function MSKen.init(_context)
 
 	do
 		local function runMoneyFarmSequence(isCancelled)
-			pressKey(Enum.KeyCode.Two)
+			-- Only press 2 if the phone isn't already open on screen.
+			local phoneContainer = findGuiElement(PHONE_CONTAINER_PATH)
+			if not (phoneContainer and isGuiElementVisible(phoneContainer)) then
+				pressKey(Enum.KeyCode.Two)
 
-			local phoneContainer = waitForGuiElement(PHONE_CONTAINER_PATH, 5, isCancelled)
-			if not phoneContainer then
-				return false, "Phone container not found (is the phone open?)"
+				local deadline = os.clock() + 5
+				repeat
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					phoneContainer = findGuiElement(PHONE_CONTAINER_PATH)
+					if phoneContainer and isGuiElementVisible(phoneContainer) then
+						break
+					end
+
+					task.wait(0.1)
+				until os.clock() > deadline
+
+				if not (phoneContainer and isGuiElementVisible(phoneContainer)) then
+					return false, "Phone did not open after pressing 2"
+				end
 			end
 
 			task.wait(0.3)
