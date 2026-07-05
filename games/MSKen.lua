@@ -31,7 +31,7 @@ function MSKen.init(_context)
 	end)
 
 	local Window = Library:CreateWindow({
-		Title = "Huaj Hub",
+		Title = "MS:Ken | Huaj Hub",
 		Center = true,
 		AutoShow = true,
 		Size = UDim2.fromOffset(550, 600),
