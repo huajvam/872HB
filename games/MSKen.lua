@@ -23,9 +23,11 @@ local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "P
 -- from a template at runtime, so their exact paths aren't stable.
 local RESTOCK_QUEST_TEXT = "You still need to restock"
 
--- The game draws a trail of numbered dots (Dot_1, Dot_2, ...) guiding the
--- player to the current job objective; the farm walks along them.
-local COMPASS_PATH_FOLDER_PATH = { "CompassPaths", "Path_Stocker" }
+-- The game draws trails of numbered dots (Dot_1, Dot_2, ...) guiding the
+-- player to each job objective: Path_Stocker leads to the Stock box, then
+-- Path_Stocker_1 .. Path_Stocker_12 lead to the individual restock spots.
+local COMPASS_FOLDER_NAME = "CompassPaths"
+local TRAIL_NAME_PREFIX = "Path_Stocker"
 
 local function logFarm(message)
 	warn("[HuajHub][MoneyFarm] " .. tostring(message))
@@ -138,9 +140,25 @@ local function getDotPosition(instance)
 	return nil
 end
 
--- Returns the compass dots sorted by their number (Dot_1, Dot_2, ...).
-local function getCompassDots()
-	local folder = findWorkspaceChild(COMPASS_PATH_FOLDER_PATH)
+-- Every Path_Stocker* folder currently in the compass folder.
+local function getTrailFolders()
+	local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
+	if not compass then
+		return {}
+	end
+
+	local folders = {}
+	for _, child in ipairs(compass:GetChildren()) do
+		if child.Name:sub(1, #TRAIL_NAME_PREFIX) == TRAIL_NAME_PREFIX then
+			table.insert(folders, child)
+		end
+	end
+
+	return folders
+end
+
+-- Returns a trail's compass dots sorted by their number (Dot_1, Dot_2, ...).
+local function getCompassDots(folder)
 	if not folder then
 		return {}
 	end
@@ -161,7 +179,7 @@ local function getCompassDots()
 		for i = 1, math.min(#children, 8) do
 			names[i] = children[i].Name .. " (" .. children[i].ClassName .. ")"
 		end
-		logFarm(("Path_Stocker has %d children but none look like dots: %s"):format(#children, table.concat(names, ", ")))
+		logFarm(("%s has %d children but none look like dots: %s"):format(folder.Name, #children, table.concat(names, ", ")))
 	end
 
 	table.sort(dots, function(a, b)
@@ -169,6 +187,16 @@ local function getCompassDots()
 	end)
 
 	return dots
+end
+
+local function anyTrailHasDots()
+	for _, folder in ipairs(getTrailFolders()) do
+		if #getCompassDots(folder) > 0 then
+			return true
+		end
+	end
+
+	return false
 end
 
 -- Movement works like a real player: the W key is held down through
@@ -386,13 +414,13 @@ function MSKen.init(_context)
 			logFarm("restock route started; following the compass path")
 			setFarmCameraActive(true)
 
-			-- Walks the compass dots starting from the one closest to the player,
+			-- Walks a trail's dots starting from the one closest to the player,
 			-- heading toward whichever end of the trail is farther away (the
 			-- objective end).
-			local function followCompassDots()
-				local dots = getCompassDots()
+			local function followCompassDots(trailFolder)
+				local dots = getCompassDots(trailFolder)
 				if #dots == 0 then
-					return false, "no compass dots"
+					return false, "trail " .. trailFolder.Name .. " has no dots"
 				end
 
 				local root = getCharacterRoot()
@@ -478,6 +506,32 @@ function MSKen.init(_context)
 				return best, bestDistance
 			end
 
+			-- Each trail is followed once: Path_Stocker to the Stock box first,
+			-- then whichever spot trail is closest, until all are done.
+			local visitedTrails = {}
+
+			local function pickClosestTrail()
+				local root = getCharacterRoot()
+				if not root then
+					return nil
+				end
+
+				local best, bestDistance = nil, math.huge
+
+				for _, folder in ipairs(getTrailFolders()) do
+					if not visitedTrails[folder] then
+						for _, dot in ipairs(getCompassDots(folder)) do
+							local distance = (dot.position - root.Position).Magnitude
+							if distance < bestDistance then
+								best, bestDistance = folder, distance
+							end
+						end
+					end
+				end
+
+				return best
+			end
+
 			-- Stock pickup + 12 spots, with headroom for retries.
 			local MAX_CYCLES = 20
 
@@ -492,10 +546,19 @@ function MSKen.init(_context)
 					break
 				end
 
-				local moved, moveError = followCompassDots()
+				local trailFolder = pickClosestTrail()
+				if not trailFolder then
+					logFarm("no unvisited compass trails left; route done")
+					break
+				end
+
+				logFarm("following trail: " .. trailFolder.Name)
+				local moved, moveError = followCompassDots(trailFolder)
 				if not moved then
 					return false, moveError
 				end
+
+				visitedTrails[trailFolder] = true
 
 				local target, targetDistance = nearestClickTarget()
 				if not target then
@@ -601,7 +664,7 @@ function MSKen.init(_context)
 					break
 				end
 
-				if #getCompassDots() > 0 then
+				if anyTrailHasDots() then
 					trailIsUp = true
 					break
 				end
