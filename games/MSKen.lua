@@ -17,6 +17,8 @@ local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
 local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
+local QUEST_NAME_PATH = { "Quests", "Frame", "quests", "template", "container", "name" }
+local TARGET_QUEST_TEXT = "You still need to restock 0 / 12 items!"
 
 local function findGuiElement(pathParts)
 	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -200,7 +202,23 @@ function MSKen.init(_context)
 			end
 			clickGuiElement(acceptButton)
 
-			return true
+			-- Verify the accepted job is the restock quest by checking the quest
+			-- tracker text.
+			local questDeadline = os.clock() + 5
+			while os.clock() < questDeadline do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				local questLabel = findGuiElement(QUEST_NAME_PATH)
+				if questLabel and questLabel.Text == TARGET_QUEST_TEXT then
+					return true
+				end
+
+				task.wait(0.1)
+			end
+
+			return false, "accepted job is not the restock quest"
 		end
 
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
@@ -223,7 +241,7 @@ function MSKen.init(_context)
 
 				local ok, message = runMoneyFarmSequence(isCancelled)
 				if ok then
-					Library:Notify("Money Farm: job accepted", 3)
+					Library:Notify("Job Found!", 3)
 				elseif message ~= "cancelled" then
 					Library:Notify("Money Farm: " .. tostring(message), 5)
 				end
