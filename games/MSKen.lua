@@ -133,7 +133,7 @@ function MSKen.init(_context)
 				if isCancelled() then
 					return false, "cancelled"
 				end
-				clickGuiElement(jobsButton)
+				clickGuiElement(jobsButton, 0.75, 0.5)
 				task.wait(0.15)
 			end
 
