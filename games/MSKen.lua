@@ -491,6 +491,10 @@ function MSKen.init(_context)
 				return true, nil, dots[lastIndex].position
 			end
 
+			-- Parts already fired this job. Firing a spot twice is an invalid
+			-- click server-side, so each part is clicked at most once per job.
+			local firedParts = {}
+
 			-- The clickable job part closest to the trail's destination dot —
 			-- the objective the compass was pointing at. Measuring from the
 			-- player instead can grab a neighboring shelf spot, which the
@@ -514,7 +518,7 @@ function MSKen.init(_context)
 				for _, descendant in ipairs(jobsFolder:GetDescendants()) do
 					if descendant:IsA("ClickDetector") then
 						local part = descendant.Parent
-						if part and part:IsA("BasePart") then
+						if part and part:IsA("BasePart") and not firedParts[part] then
 							local distance = (part.Position - fromPosition).Magnitude
 							if distance < bestDistance then
 								best, bestDistance = part, distance
@@ -630,6 +634,7 @@ function MSKen.init(_context)
 					end
 
 					logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
+					firedParts[target] = true
 					fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 					-- Brief settle for the click to register; the next cycle
