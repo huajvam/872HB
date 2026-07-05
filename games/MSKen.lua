@@ -17,8 +17,10 @@ local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
 local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
-local QUEST_NAME_PATH = { "Quests", "Frame", "quests", "template", "container", "name" }
-local TARGET_QUEST_TEXT = "You still need to restock 0 / 12 items!"
+-- Any label under PlayerGui.Quests containing this text marks the restock job
+-- as active. Matched by scanning descendants because quest rows are cloned
+-- from a template at runtime, so their exact paths aren't stable.
+local RESTOCK_QUEST_TEXT = "You still need to restock"
 
 local STOCK_PART_PATH = { "Jobs", "Restock", "JLF", "Stock" }
 local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
@@ -43,6 +45,25 @@ local function findGuiElement(pathParts)
 	end
 
 	return current
+end
+
+-- Finds the live quest entry (a visible clone of the template row) by
+-- scanning every label under PlayerGui.Quests for the restock text.
+local function findRestockQuestLabel()
+	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local questsGui = playerGui and playerGui:FindFirstChild("Quests")
+	if not questsGui then
+		return nil
+	end
+
+	for _, descendant in ipairs(questsGui:GetDescendants()) do
+		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
+			and descendant.Text:find(RESTOCK_QUEST_TEXT, 1, true) then
+			return descendant
+		end
+	end
+
+	return nil
 end
 
 local function waitForGuiElement(pathParts, timeout, shouldCancel)
@@ -426,9 +447,7 @@ function MSKen.init(_context)
 				end
 
 				-- Once the tracker stops showing the restock text the job is done.
-				local questLabel = findGuiElement(QUEST_NAME_PATH)
-				local questText = questLabel and questLabel.Text or ""
-				if cycle > 1 and not questText:find("You still need to restock", 1, true) then
+				if cycle > 1 and not findRestockQuestLabel() then
 					logFarm("quest tracker no longer shows the restock text; route done")
 					break
 				end
@@ -526,37 +545,29 @@ function MSKen.init(_context)
 			logFarm("clicking the accept button")
 			clickGuiElement(acceptButton)
 
-			-- Verify the accepted job is the restock quest by checking the quest
-			-- tracker text. Matches on the "You still need to restock" prefix so
-			-- varying item counts don't break it; the exact-text constant stays as
-			-- documentation of the expected label.
-			local jobConfirmed = false
-			local lastQuestText = nil
+			-- Verify the accepted job is the restock quest by scanning the quest
+			-- tracker for the restock text.
+			local questLabel = nil
 			local questDeadline = os.clock() + 5
 			while os.clock() < questDeadline do
 				if isCancelled() then
 					return false, "cancelled"
 				end
 
-				local questLabel = findGuiElement(QUEST_NAME_PATH)
+				questLabel = findRestockQuestLabel()
 				if questLabel then
-					lastQuestText = questLabel.Text
-					if questLabel.Text == TARGET_QUEST_TEXT
-						or questLabel.Text:find("You still need to restock", 1, true) then
-						jobConfirmed = true
-						break
-					end
+					break
 				end
 
 				task.wait(0.1)
 			end
 
-			if not jobConfirmed then
-				logFarm("quest text never matched; last seen: " .. tostring(lastQuestText))
+			if not questLabel then
+				logFarm("no label containing the restock text found under PlayerGui.Quests")
 				return false, "accepted job is not the restock quest"
 			end
 
-			logFarm("restock quest confirmed: " .. tostring(lastQuestText))
+			logFarm(("restock quest confirmed: %q (label: %s)"):format(questLabel.Text, questLabel:GetFullName()))
 			Library:Notify("Job Found!", 3)
 
 			return runRestockRoute(isCancelled)
@@ -586,6 +597,7 @@ function MSKen.init(_context)
 				if ok then
 					Library:Notify("Money Farm: restock route complete", 3)
 				elseif message ~= "cancelled" then
+					logFarm("stopped: " .. tostring(message))
 					Library:Notify("Money Farm: " .. tostring(message), 5)
 				end
 			end)
