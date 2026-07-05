@@ -128,6 +128,15 @@ function MSKen.init(_context)
 			end
 			clickGuiElement(jobsButton, 0.25, 0.5)
 
+			-- Dwell on the job frame before moving on to the accept button.
+			local dwellDeadline = os.clock() + 3
+			while os.clock() < dwellDeadline do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+				task.wait(0.1)
+			end
+
 			local acceptButton = waitForGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
 			if not acceptButton then
 				return false, "Accept button not found on the jobs screen"
