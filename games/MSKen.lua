@@ -24,10 +24,13 @@ local TARGET_QUEST_TEXT = "You still need to restock 0 / 12 items!"
 local STOCK_PART_PATH = { "Jobs", "Restock", "JLF", "Stock" }
 local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
 
--- The Stock/Spots ClickDetectors have a 6 stud activation range, so the player
--- is parked as deep below the target part as that range allows: underground but
--- still close enough to fire the click.
-local UNDERGROUND_DEPTH = 5.5
+-- The game draws a trail of numbered dots (Dot_1, Dot_2, ...) guiding the
+-- player to the current job objective; the farm walks along them.
+local COMPASS_PATH_FOLDER_PATH = { "CompassPaths", "Path_Stocker" }
+
+-- How high above each dot the HumanoidRootPart travels (dots sit on the floor,
+-- the root part floats ~2.5 studs above it on a standing character).
+local DOT_HEIGHT_OFFSET = 2.5
 
 local function logFarm(message)
 	warn("[HuajHub][MoneyFarm] " .. tostring(message))
@@ -106,6 +109,28 @@ end
 local function getCharacterRoot()
 	local character = LocalPlayer and LocalPlayer.Character
 	return character and character:FindFirstChild("HumanoidRootPart") or nil
+end
+
+-- Returns the compass dots sorted by their number (Dot_1, Dot_2, ...).
+local function getCompassDots()
+	local folder = findWorkspaceChild(COMPASS_PATH_FOLDER_PATH)
+	if not folder then
+		return {}
+	end
+
+	local dots = {}
+	for _, child in ipairs(folder:GetChildren()) do
+		local index = tonumber(child.Name:match("^Dot_(%d+)$"))
+		if index and child:IsA("BasePart") then
+			table.insert(dots, { index = index, part = child })
+		end
+	end
+
+	table.sort(dots, function(a, b)
+		return a.index < b.index
+	end)
+
+	return dots
 end
 
 -- Steps the HumanoidRootPart toward the target each frame at the speed set by
@@ -232,18 +257,10 @@ function MSKen.init(_context)
 				return false, "Spots folder not found"
 			end
 
-			logFarm("restock route started; moving under the Stock box")
+			logFarm("restock route started; following the compass path")
 
-			local platform = Instance.new("Part")
-			platform.Name = "HuajHubFarmPlatform"
-			platform.Size = Vector3.new(8, 1, 8)
-			platform.Anchored = true
-			platform.CanCollide = true
-			platform.Transparency = 0.5
-			platform.Parent = workspace
-
-			-- Noclip while the route runs so the character can pass through the
-			-- ground instead of being pushed back out by collisions.
+			-- Noclip while the route runs so the compass path can be followed in
+			-- a straight line without snagging on props or walls.
 			local noclipConnection = RunService.Stepped:Connect(function()
 				local character = LocalPlayer and LocalPlayer.Character
 				if not character then
@@ -259,7 +276,6 @@ function MSKen.init(_context)
 
 			local function finish(ok, message)
 				noclipConnection:Disconnect()
-				platform:Destroy()
 
 				local root = getCharacterRoot()
 				if root then
@@ -277,68 +293,122 @@ function MSKen.init(_context)
 				return ok, message
 			end
 
-			-- Sinks the player underground, moves them under the target at the
-			-- slider speed, parks them on the platform within click range, and
-			-- fires the part's ClickDetector.
-			local function moveUnderAndClick(part)
-				local detector = part:FindFirstChildOfClass("ClickDetector")
+			-- Walks the compass dots starting from the one closest to the player,
+			-- heading toward whichever end of the trail is farther away (the
+			-- objective end).
+			local function followCompassDots()
+				local dots = getCompassDots()
+				if #dots == 0 then
+					return false, "no compass dots"
+				end
+
 				local root = getCharacterRoot()
-				if not detector or not root then
-					return false
+				if not root then
+					return false, "no character root"
 				end
 
-				local underPosition = part.Position - Vector3.new(0, UNDERGROUND_DEPTH, 0)
-
-				-- Go straight down first, then travel underground to the target.
-				local sinkPosition = Vector3.new(root.Position.X, underPosition.Y, root.Position.Z)
-				if not moveRootTo(sinkPosition, isCancelled) then
-					return false
+				local closestIndex = 1
+				local closestDistance = math.huge
+				for i, dot in ipairs(dots) do
+					local distance = (dot.part.Position - root.Position).Magnitude
+					if distance < closestDistance then
+						closestIndex = i
+						closestDistance = distance
+					end
 				end
 
-				platform.Position = underPosition - Vector3.new(0, 3.5, 0)
-				if not moveRootTo(underPosition, isCancelled) then
-					return false
+				local distanceToFirst = (dots[1].part.Position - root.Position).Magnitude
+				local distanceToLast = (dots[#dots].part.Position - root.Position).Magnitude
+
+				local lastIndex, step
+				if distanceToLast >= distanceToFirst then
+					lastIndex, step = #dots, 1
+				else
+					lastIndex, step = 1, -1
 				end
 
-				-- Anchor in place while parked underground; the character has no
-				-- collisions right now, so this is what keeps it from falling.
-				root = getCharacterRoot()
-				if root then
-					root.Anchored = true
+				logFarm(("following %d compass dots (from dot %d toward dot %d)"):format(
+					math.abs(lastIndex - closestIndex) + 1, dots[closestIndex].index, dots[lastIndex].index))
+
+				for i = closestIndex, lastIndex, step do
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					local dotPosition = dots[i].part.Position + Vector3.new(0, DOT_HEIGHT_OFFSET, 0)
+					if not moveRootTo(dotPosition, isCancelled) then
+						return false, "cancelled"
+					end
 				end
 
-				task.wait(0.2)
-				if isCancelled() then
-					return false
-				end
-
-				logFarm("firing ClickDetector on " .. part:GetFullName())
-				fireclickdetector(detector)
 				return true
 			end
 
-			if not moveUnderAndClick(stockPart) then
-				return finish(false, isCancelled() and "cancelled" or "could not click the Stock box")
+			-- The nearest clickable job part (the Stock box or one of the spots);
+			-- after walking the path this is what the trail was leading to.
+			local function nearestClickTarget()
+				local root = getCharacterRoot()
+				if not root then
+					return nil
+				end
+
+				local best, bestDistance = nil, math.huge
+
+				local function consider(part)
+					if part:IsA("BasePart") and part:FindFirstChildOfClass("ClickDetector") then
+						local distance = (part.Position - root.Position).Magnitude
+						if distance < bestDistance then
+							best, bestDistance = part, distance
+						end
+					end
+				end
+
+				consider(stockPart)
+				for _, spot in ipairs(spotsFolder:GetChildren()) do
+					consider(spot)
+				end
+
+				return best, bestDistance
 			end
 
-			if not sleepUnlessCancelled(5, isCancelled) then
-				return finish(false, "cancelled")
-			end
+			-- Stock pickup + 12 spots, with headroom for retries.
+			local MAX_CYCLES = 20
 
-			for _, spot in ipairs(spotsFolder:GetChildren()) do
+			for cycle = 1, MAX_CYCLES do
 				if isCancelled() then
 					return finish(false, "cancelled")
 				end
 
-				if spot:IsA("BasePart") and spot:FindFirstChildOfClass("ClickDetector") then
-					logFarm("moving under spot: " .. spot.Name)
-					if not moveUnderAndClick(spot) and isCancelled() then
-						return finish(false, "cancelled")
-					end
+				-- Once the tracker stops showing the restock text the job is done.
+				local questLabel = findGuiElement(QUEST_NAME_PATH)
+				local questText = questLabel and questLabel.Text or ""
+				if cycle > 1 and not questText:find("You still need to restock", 1, true) then
+					logFarm("quest tracker no longer shows the restock text; route done")
+					break
+				end
 
-					if not sleepUnlessCancelled(5, isCancelled) then
-						return finish(false, "cancelled")
-					end
+				local moved, moveError = followCompassDots()
+				if not moved then
+					return finish(false, moveError)
+				end
+
+				local target, targetDistance = nearestClickTarget()
+				if not target then
+					return finish(false, "no clickable job part near the end of the path")
+				end
+
+				-- Anchor while parked; collisions are off, so this is what keeps
+				-- the character from falling through the floor.
+				local root = getCharacterRoot()
+				if root then
+					root.Anchored = true
+				end
+
+				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), targetDistance))
+				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
+
+				if not sleepUnlessCancelled(5, isCancelled) then
+					return finish(false, "cancelled")
 				end
 			end
 
