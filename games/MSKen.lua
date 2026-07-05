@@ -475,21 +475,26 @@ function MSKen.init(_context)
 				end
 
 				-- Arrived; let go of W and stop steering so the character
-				-- stands still for the click.
+				-- stands still for the click. The final dot marks WHICH shelf
+				-- this trail's objective is.
 				setWKeyHeld(false)
 				setWalkTarget(nil)
-				return true
+				return true, nil, dots[#dots].position
 			end
 
 			-- Parts already fired this job. Firing a spot twice is an invalid
 			-- click server-side, so each part is clicked at most once per job.
 			local firedParts = {}
 
-			-- The un-fired clickable part the PLAYER is closest to right now.
-			-- Only a part the player is basically standing on ever gets fired.
-			local function nearestUnfiredPart()
-				local root = getCharacterRoot()
-				if not root then
+			-- The un-fired clickable part closest to fromPosition (the trail's
+			-- final dot when available - the game's own pointer at the right
+			-- shelf - or the player's position otherwise).
+			local function nearestUnfiredPartTo(fromPosition)
+				if not fromPosition then
+					local root = getCharacterRoot()
+					fromPosition = root and root.Position
+				end
+				if not fromPosition then
 					return nil
 				end
 
@@ -506,7 +511,7 @@ function MSKen.init(_context)
 						if part and part:IsA("BasePart") and not firedParts[part] then
 							table.insert(candidates, {
 								part = part,
-								distance = (part.Position - root.Position).Magnitude,
+								distance = (part.Position - fromPosition).Magnitude,
 							})
 						end
 					end
@@ -524,7 +529,7 @@ function MSKen.init(_context)
 				for i = 1, math.min(3, #candidates) do
 					summary[i] = ("%s=%.1f"):format(candidates[i].part.Name, candidates[i].distance)
 				end
-				logFarm("click candidates (dist from player): " .. table.concat(summary, ", "))
+				logFarm("click candidates: " .. table.concat(summary, ", "))
 
 				return candidates[1].part, candidates[1].distance, candidates[2] and candidates[2].distance or nil
 			end
@@ -537,13 +542,6 @@ function MSKen.init(_context)
 
 			-- Only a part the player is basically standing on gets fired.
 			local SUPER_CLOSE_RANGE = 4
-
-			-- Server-verified rule: the Stock click loads 3 items, and a spot
-			-- click with none carried is an "invalid click" (kick on strike 2).
-			-- Every kicked run died on the 4th consecutive spot fire; the one
-			-- run that refilled every 3 reached 10/12 with zero rejects.
-			local ITEMS_PER_STOCK_VISIT = 3
-			local itemsCarried = 0
 
 			-- Fires the target's ClickDetector if the player is close enough.
 			-- Only returns false on cancellation; a skipped click is not fatal.
@@ -561,25 +559,15 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
-				-- Re-check after the walk: fire only if the intended target is
-				-- still the closest unfired part. Inside the strict range it's
-				-- always safe; slightly beyond it (unreachable final dot, up to
-				-- the detector's 6 stud limit) only when the runner-up is far
-				-- enough away that there's no ambiguity about which part it is.
-				local nearest, nearestDistance, runnerUpDistance = nearestUnfiredPart()
-				if nearest ~= target then
-					logFarm(("%s is no longer the closest unfired part after walking; skipping"):format(target.Name))
+				-- The target's identity is already settled (it came from the
+				-- trail's final dot or the spot index); just make sure the
+				-- player is inside the detector's range before firing.
+				root = getCharacterRoot()
+				clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
+				if clickDistance > 5.8 then
+					logFarm(("still %.1f studs from %s; not close enough, skipping this click"):format(clickDistance, target.Name))
 					return true
 				end
-
-				local unambiguous = runnerUpDistance == nil or runnerUpDistance > nearestDistance + 3
-				if nearestDistance > 5.8 or (nearestDistance > SUPER_CLOSE_RANGE and not unambiguous) then
-					logFarm(("still %.1f studs from %s (runner-up at %.1f); not safe to fire, skipping"):format(
-						nearestDistance, target.Name, runnerUpDistance or -1))
-					return true
-				end
-
-				clickDistance = nearestDistance
 
 				-- Short human-like pause to line up the click.
 				if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
@@ -591,14 +579,10 @@ function MSKen.init(_context)
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
 				local progressBefore = getQuestProgress()
-				-- Spots are one-shot; the Stock box is refilled at repeatedly.
-				if target.Name ~= "Stock" then
-					firedParts[target] = true
-				end
+				firedParts[target] = true
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if target.Name == "Stock" then
-					itemsCarried = ITEMS_PER_STOCK_VISIT
 					return true
 				end
 
@@ -622,9 +606,7 @@ function MSKen.init(_context)
 					end
 
 					if counted then
-						itemsCarried -= 1
-						logFarm(("server counted the restock (%s/12, %d carried items left)"):format(
-							tostring(getQuestProgress()), itemsCarried))
+						logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
 					else
 						logFarm("quest counter did NOT increase after that fire - the server rejected it")
 					end
@@ -644,13 +626,13 @@ function MSKen.init(_context)
 				return children and children[index] or nil
 			end
 
-			local function refillAtStock()
+			local function clickStockOnce()
 				local stockPart = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Stock" })
 				if not (stockPart and stockPart:FindFirstChildOfClass("ClickDetector")) then
 					return false, "Stock part not found"
 				end
 
-				logFarm("heading to the Stock box to pick up items")
+				logFarm("heading to the Stock box to start the job")
 
 				-- Follow the stock trail if the game has one drawn, otherwise
 				-- walk straight to the box.
@@ -674,8 +656,13 @@ function MSKen.init(_context)
 				return approachAndFire(stockPart)
 			end
 
-			-- Spots strictly in order 1 through 12, picking up 3 items at the
-			-- Stock box whenever the carried ones run out.
+			-- The job: click the Stock box ONCE, then click all 12 spots in
+			-- order. There is no returning to the Stock box.
+			local stockClicked, stockError = clickStockOnce()
+			if not stockClicked then
+				return false, stockError
+			end
+
 			for spotIndex = 1, 12 do
 				if isCancelled() then
 					return false, "cancelled"
@@ -685,13 +672,6 @@ function MSKen.init(_context)
 				if spotIndex > 1 and not findRestockQuestLabel() then
 					logFarm("quest tracker no longer shows the restock text; route done")
 					break
-				end
-
-				if itemsCarried <= 0 then
-					local refilled, refillError = refillAtStock()
-					if not refilled then
-						return false, refillError
-					end
 				end
 
 				-- Follow this spot's own trail if it has dots (waiting briefly
@@ -711,15 +691,30 @@ function MSKen.init(_context)
 					task.wait(0.15)
 				end
 
+				-- Pick WHICH shelf to fire from the game's own signals: the
+				-- trail's final dot when there is one, or the indexed spot
+				-- part when there isn't. Never from player proximity.
+				local target = nil
+
 				if trailFolder and #getCompassDots(trailFolder) > 0 then
-					local moved, moveError = followCompassDots(trailFolder)
+					local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
 					if not moved then
 						return false, moveError
 					end
+
+					local candidate, candidateDistance = nearestUnfiredPartTo(trailEndPosition)
+					if candidate and candidateDistance <= 3.5 then
+						target = candidate
+					elseif candidate then
+						logFarm(("%s is %.1f studs from the trail's last dot - not the objective; not firing"):format(
+							candidate.Name, candidateDistance))
+					end
 				else
 					local spotPart = getSpotByIndex(spotIndex)
-					if not spotPart or not spotPart:IsA("BasePart") then
-						logFarm(("no trail and no spot part for #%d; skipping it"):format(spotIndex))
+					if not spotPart or not spotPart:IsA("BasePart") or not spotPart:FindFirstChildOfClass("ClickDetector") then
+						logFarm(("no trail and no usable spot part for #%d; skipping it"):format(spotIndex))
+					elseif firedParts[spotPart] then
+						logFarm(("spot #%d was already fired; skipping it"):format(spotIndex))
 					else
 						logFarm(("no dots for %s_%d; walking straight to spot #%d"):format(TRAIL_NAME_PREFIX, spotIndex, spotIndex))
 						walkTo(spotPart.Position, isCancelled)
@@ -729,21 +724,16 @@ function MSKen.init(_context)
 						if isCancelled() then
 							return false, "cancelled"
 						end
+
+						target = spotPart
 					end
 				end
 
-				-- Let approachAndFire close the final stretch if we're near;
-				-- it re-checks range and ambiguity before actually firing.
-				local target, targetDistance = nearestUnfiredPart()
-				if target and targetDistance <= 15 then
+				if target then
 					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
-				else
-					logFarm(("no unfired part anywhere near (nearest: %s at %.1f studs); not firing"):format(
-						target and target.Name or "none",
-						target and targetDistance or -1))
 				end
 			end
 
@@ -762,13 +752,6 @@ function MSKen.init(_context)
 
 				logFarm(("sweep %d: quest still active, hunting leftover spots"):format(sweep))
 
-				if itemsCarried <= 0 then
-					local refilled, refillError = refillAtStock()
-					if not refilled then
-						return false, refillError
-					end
-				end
-
 				local trailFolder = nil
 				for _, folder in ipairs(getTrailFolders()) do
 					if #getCompassDots(folder) > 0 then
@@ -777,11 +760,18 @@ function MSKen.init(_context)
 					end
 				end
 
+				local sweepTarget = nil
+
 				if trailFolder then
 					logFarm("following leftover trail: " .. trailFolder.Name)
-					local moved, moveError = followCompassDots(trailFolder)
+					local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
 					if not moved then
 						return false, moveError
+					end
+
+					local candidate, candidateDistance = nearestUnfiredPartTo(trailEndPosition)
+					if candidate and candidateDistance <= 3.5 then
+						sweepTarget = candidate
 					end
 				else
 					local spotsFolder = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Spots" })
@@ -813,16 +803,17 @@ function MSKen.init(_context)
 					if isCancelled() then
 						return false, "cancelled"
 					end
+
+					sweepTarget = best
 				end
 
-				local target, targetDistance = nearestUnfiredPart()
-				if target and targetDistance <= 15 then
-					local fired, fireError = approachAndFire(target)
+				if sweepTarget then
+					local fired, fireError = approachAndFire(sweepTarget)
 					if not fired then
 						return false, fireError
 					end
 				else
-					logFarm("sweep: no unfired part anywhere near; retrying")
+					logFarm("sweep: no safe target this pass; retrying")
 				end
 			end
 
