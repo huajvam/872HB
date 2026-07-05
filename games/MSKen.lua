@@ -20,6 +20,13 @@ local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "P
 local QUEST_NAME_PATH = { "Quests", "Frame", "quests", "template", "container", "name" }
 local TARGET_QUEST_TEXT = "You still need to restock 0 / 12 items!"
 
+local STOCK_PART_PATH = { "Jobs", "Restock", "JLF", "Stock" }
+local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
+
+-- The Stock/Spots ClickDetectors have a 6 stud activation range, so the player
+-- is parked 4 studs below the target part: underground but still in range.
+local TELEPORT_DEPTH = 4
+
 local function findGuiElement(pathParts)
 	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
 	local current = playerGui
@@ -74,6 +81,37 @@ local function equipPhoneFromBackpack()
 	end
 
 	humanoid:EquipTool(phoneTool)
+	return true
+end
+
+local function findWorkspaceChild(pathParts)
+	local current = workspace
+
+	for _, childName in ipairs(pathParts) do
+		if not current then
+			return nil
+		end
+		current = current:FindFirstChild(childName)
+	end
+
+	return current
+end
+
+local function getCharacterRoot()
+	local character = LocalPlayer and LocalPlayer.Character
+	return character and character:FindFirstChild("HumanoidRootPart") or nil
+end
+
+local function sleepUnlessCancelled(duration, isCancelled)
+	local deadline = os.clock() + duration
+
+	while os.clock() < deadline do
+		if isCancelled() then
+			return false
+		end
+		task.wait(0.1)
+	end
+
 	return true
 end
 
@@ -135,6 +173,78 @@ function MSKen.init(_context)
 	local moneyFarmGroup = Tabs.Autofarm:AddLeftGroupbox("Money Farm")
 
 	do
+		local function runRestockRoute(isCancelled)
+			if type(fireclickdetector) ~= "function" then
+				return false, "this executor does not support fireclickdetector"
+			end
+
+			local stockPart = findWorkspaceChild(STOCK_PART_PATH)
+			if not (stockPart and stockPart:IsA("BasePart") and stockPart:FindFirstChildOfClass("ClickDetector")) then
+				return false, "Stock part or its ClickDetector not found"
+			end
+
+			local spotsFolder = findWorkspaceChild(SPOTS_FOLDER_PATH)
+			if not spotsFolder then
+				return false, "Spots folder not found"
+			end
+
+			local platform = Instance.new("Part")
+			platform.Name = "HuajHubFarmPlatform"
+			platform.Size = Vector3.new(8, 1, 8)
+			platform.Anchored = true
+			platform.CanCollide = true
+			platform.Transparency = 0.5
+			platform.Parent = workspace
+
+			local function finish(ok, message)
+				platform:Destroy()
+				return ok, message
+			end
+
+			-- Moves the platform under the target, parks the player on it within
+			-- click range, and fires the part's ClickDetector.
+			local function teleportUnderAndClick(part)
+				local detector = part:FindFirstChildOfClass("ClickDetector")
+				local root = getCharacterRoot()
+				if not detector or not root then
+					return false
+				end
+
+				local underPosition = part.Position - Vector3.new(0, TELEPORT_DEPTH, 0)
+				platform.Position = underPosition - Vector3.new(0, 3.5, 0)
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.CFrame = CFrame.new(underPosition)
+
+				task.wait(0.2)
+				fireclickdetector(detector)
+				return true
+			end
+
+			if not teleportUnderAndClick(stockPart) then
+				return finish(false, "could not click the Stock box")
+			end
+
+			if not sleepUnlessCancelled(5, isCancelled) then
+				return finish(false, "cancelled")
+			end
+
+			for _, spot in ipairs(spotsFolder:GetChildren()) do
+				if isCancelled() then
+					return finish(false, "cancelled")
+				end
+
+				if spot:IsA("BasePart") and spot:FindFirstChildOfClass("ClickDetector") then
+					teleportUnderAndClick(spot)
+
+					if not sleepUnlessCancelled(5, isCancelled) then
+						return finish(false, "cancelled")
+					end
+				end
+			end
+
+			return finish(true)
+		end
+
 		local function runMoneyFarmSequence(isCancelled)
 			-- Equip the phone tool from the backpack if it isn't already in hand.
 			if not isPhoneEquipped() then
@@ -204,6 +314,7 @@ function MSKen.init(_context)
 
 			-- Verify the accepted job is the restock quest by checking the quest
 			-- tracker text.
+			local jobConfirmed = false
 			local questDeadline = os.clock() + 5
 			while os.clock() < questDeadline do
 				if isCancelled() then
@@ -212,13 +323,20 @@ function MSKen.init(_context)
 
 				local questLabel = findGuiElement(QUEST_NAME_PATH)
 				if questLabel and questLabel.Text == TARGET_QUEST_TEXT then
-					return true
+					jobConfirmed = true
+					break
 				end
 
 				task.wait(0.1)
 			end
 
-			return false, "accepted job is not the restock quest"
+			if not jobConfirmed then
+				return false, "accepted job is not the restock quest"
+			end
+
+			Library:Notify("Job Found!", 3)
+
+			return runRestockRoute(isCancelled)
 		end
 
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
@@ -241,7 +359,7 @@ function MSKen.init(_context)
 
 				local ok, message = runMoneyFarmSequence(isCancelled)
 				if ok then
-					Library:Notify("Job Found!", 3)
+					Library:Notify("Money Farm: restock route complete", 3)
 				elseif message ~= "cancelled" then
 					Library:Notify("Money Farm: " .. tostring(message), 5)
 				end
