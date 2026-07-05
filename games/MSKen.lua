@@ -526,7 +526,7 @@ function MSKen.init(_context)
 				end
 				logFarm("click candidates (dist from player): " .. table.concat(summary, ", "))
 
-				return candidates[1].part, candidates[1].distance
+				return candidates[1].part, candidates[1].distance, candidates[2] and candidates[2].distance or nil
 			end
 
 			local function getQuestProgress()
@@ -548,18 +548,31 @@ function MSKen.init(_context)
 					walkTo(target.Position, isCancelled)
 					setWKeyHeld(false)
 					setWalkTarget(nil)
-					root = getCharacterRoot()
-					clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
 				end
 
 				if isCancelled() then
 					return false, "cancelled"
 				end
 
-				if clickDistance > SUPER_CLOSE_RANGE then
-					logFarm(("still %.1f studs from %s; not close enough, skipping this click"):format(clickDistance, target.Name))
+				-- Re-check after the walk: fire only if the intended target is
+				-- still the closest unfired part. Inside the strict range it's
+				-- always safe; slightly beyond it (unreachable final dot, up to
+				-- the detector's 6 stud limit) only when the runner-up is far
+				-- enough away that there's no ambiguity about which part it is.
+				local nearest, nearestDistance, runnerUpDistance = nearestUnfiredPart()
+				if nearest ~= target then
+					logFarm(("%s is no longer the closest unfired part after walking; skipping"):format(target.Name))
 					return true
 				end
+
+				local unambiguous = runnerUpDistance == nil or runnerUpDistance > nearestDistance + 3
+				if nearestDistance > 5.8 or (nearestDistance > SUPER_CLOSE_RANGE and not unambiguous) then
+					logFarm(("still %.1f studs from %s (runner-up at %.1f); not safe to fire, skipping"):format(
+						nearestDistance, target.Name, runnerUpDistance or -1))
+					return true
+				end
+
+				clickDistance = nearestDistance
 
 				-- Short human-like pause to line up the click.
 				if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
@@ -704,17 +717,16 @@ function MSKen.init(_context)
 					end
 				end
 
-				-- Fire only whatever un-fired part the player is right on top
-				-- of now - never anything farther away.
+				-- Let approachAndFire close the final stretch if we're near;
+				-- it re-checks range and ambiguity before actually firing.
 				local target, targetDistance = nearestUnfiredPart()
-				if target and targetDistance <= SUPER_CLOSE_RANGE then
+				if target and targetDistance <= 15 then
 					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
 				else
-					logFarm(("no unfired part within %d studs (nearest: %s at %.1f studs); not firing"):format(
-						SUPER_CLOSE_RANGE,
+					logFarm(("no unfired part anywhere near (nearest: %s at %.1f studs); not firing"):format(
 						target and target.Name or "none",
 						target and targetDistance or -1))
 				end
@@ -782,13 +794,13 @@ function MSKen.init(_context)
 				end
 
 				local target, targetDistance = nearestUnfiredPart()
-				if target and targetDistance <= SUPER_CLOSE_RANGE then
+				if target and targetDistance <= 15 then
 					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
 				else
-					logFarm(("sweep: no unfired part within %d studs; retrying"):format(SUPER_CLOSE_RANGE))
+					logFarm("sweep: no unfired part anywhere near; retrying")
 				end
 			end
 
