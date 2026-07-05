@@ -473,18 +473,23 @@ function MSKen.init(_context)
 				end
 
 				-- Arrived; let go of W and freeze the camera so the character
-				-- stops for the click.
+				-- stops for the click. The destination dot marks where the
+				-- game says this trail's objective is.
 				setWKeyHeld(false)
 				steerCameraToward(nil)
-				return true
+				return true, nil, dots[lastIndex].position
 			end
 
-			-- The nearest clickable job part (a Stock box or restock spot from
-			-- any store); after walking the path this is what the trail was
-			-- leading to.
-			local function nearestClickTarget()
-				local root = getCharacterRoot()
-				if not root then
+			-- The clickable job part closest to the trail's destination dot —
+			-- the objective the compass was pointing at. Measuring from the
+			-- player instead can grab a neighboring shelf spot, which the
+			-- server rejects as an invalid click.
+			local function nearestClickTarget(fromPosition)
+				if not fromPosition then
+					local root = getCharacterRoot()
+					fromPosition = root and root.Position
+				end
+				if not fromPosition then
 					return nil
 				end
 
@@ -499,7 +504,7 @@ function MSKen.init(_context)
 					if descendant:IsA("ClickDetector") then
 						local part = descendant.Parent
 						if part and part:IsA("BasePart") then
-							local distance = (part.Position - root.Position).Magnitude
+							local distance = (part.Position - fromPosition).Magnitude
 							if distance < bestDistance then
 								best, bestDistance = part, distance
 							end
@@ -572,14 +577,14 @@ function MSKen.init(_context)
 				end
 
 				logFarm("following trail: " .. trailFolder.Name)
-				local moved, moveError = followCompassDots(trailFolder)
+				local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
 				if not moved then
 					return false, moveError
 				end
 
 				visitedTrails[trailFolder.Name] = true
 
-				local target, targetDistance = nearestClickTarget()
+				local target, targetDistance = nearestClickTarget(trailEndPosition)
 				if not target then
 					return false, "no clickable job part near the end of the path"
 				end
