@@ -446,44 +446,18 @@ function MSKen.init(_context)
 			logFarm("restock route started; following the compass path")
 			setMovementOverrideActive(true)
 
-			-- Walks a trail's dots starting from the one closest to the player,
-			-- heading toward whichever end of the trail is farther away (the
-			-- objective end).
+			-- Walks a trail's dots strictly in numeric order: Dot_1, Dot_2, ...
+			-- The game draws them from the player toward the objective, and
+			-- walkTo returns instantly for dots the player is already at.
 			local function followCompassDots(trailFolder)
 				local dots = getCompassDots(trailFolder)
 				if #dots == 0 then
 					return false, "trail " .. trailFolder.Name .. " has no dots"
 				end
 
-				local root = getCharacterRoot()
-				if not root then
-					return false, "no character root"
-				end
+				logFarm(("following the %d dots of %s in order"):format(#dots, trailFolder.Name))
 
-				local closestIndex = 1
-				local closestDistance = math.huge
-				for i, dot in ipairs(dots) do
-					local distance = (dot.position - root.Position).Magnitude
-					if distance < closestDistance then
-						closestIndex = i
-						closestDistance = distance
-					end
-				end
-
-				local distanceToFirst = (dots[1].position - root.Position).Magnitude
-				local distanceToLast = (dots[#dots].position - root.Position).Magnitude
-
-				local lastIndex, step
-				if distanceToLast >= distanceToFirst then
-					lastIndex, step = #dots, 1
-				else
-					lastIndex, step = 1, -1
-				end
-
-				logFarm(("following %d compass dots (from dot %d toward dot %d)"):format(
-					math.abs(lastIndex - closestIndex) + 1, dots[closestIndex].index, dots[lastIndex].index))
-
-				for i = closestIndex, lastIndex, step do
+				for i = 1, #dots do
 					if isCancelled() then
 						return false, "cancelled"
 					end
@@ -501,27 +475,21 @@ function MSKen.init(_context)
 				end
 
 				-- Arrived; let go of W and stop steering so the character
-				-- stands still for the click. The destination dot marks where
-				-- the game says this trail's objective is.
+				-- stands still for the click.
 				setWKeyHeld(false)
 				setWalkTarget(nil)
-				return true, nil, dots[lastIndex].position
+				return true
 			end
 
 			-- Parts already fired this job. Firing a spot twice is an invalid
 			-- click server-side, so each part is clicked at most once per job.
 			local firedParts = {}
 
-			-- The clickable job part closest to the trail's destination dot —
-			-- the objective the compass was pointing at. Measuring from the
-			-- player instead can grab a neighboring shelf spot, which the
-			-- server rejects as an invalid click.
-			local function nearestClickTarget(fromPosition)
-				if not fromPosition then
-					local root = getCharacterRoot()
-					fromPosition = root and root.Position
-				end
-				if not fromPosition then
+			-- The un-fired clickable part the PLAYER is closest to right now.
+			-- Only a part the player is basically standing on ever gets fired.
+			local function nearestUnfiredPart()
+				local root = getCharacterRoot()
+				if not root then
 					return nil
 				end
 
@@ -538,7 +506,7 @@ function MSKen.init(_context)
 						if part and part:IsA("BasePart") and not firedParts[part] then
 							table.insert(candidates, {
 								part = part,
-								distance = (part.Position - fromPosition).Magnitude,
+								distance = (part.Position - root.Position).Magnitude,
 							})
 						end
 					end
@@ -556,47 +524,9 @@ function MSKen.init(_context)
 				for i = 1, math.min(3, #candidates) do
 					summary[i] = ("%s=%.1f"):format(candidates[i].part.Name, candidates[i].distance)
 				end
-				logFarm("click candidates (dist from trail end): " .. table.concat(summary, ", "))
+				logFarm("click candidates (dist from player): " .. table.concat(summary, ", "))
 
 				return candidates[1].part, candidates[1].distance
-			end
-
-			-- Dot instances recorded just before each fire; a trail containing
-			-- any dot the snapshot has never seen is the one the game just
-			-- drew, i.e. the objective it wants next. Instances, not counts:
-			-- the game can redraw a trail by swapping its dots for new ones
-			-- with the same count. This is the ONLY navigation signal used -
-			-- guessing trails is what caused invalid clicks.
-			local trailDotSnapshot = {}
-
-			local function snapshotTrailDots()
-				trailDotSnapshot = {}
-				for _, folder in ipairs(getTrailFolders()) do
-					local seen = {}
-					for _, child in ipairs(folder:GetChildren()) do
-						seen[child] = true
-					end
-					trailDotSnapshot[folder.Name] = seen
-				end
-			end
-
-			local function findFreshTrail()
-				for _, folder in ipairs(getTrailFolders()) do
-					if #getCompassDots(folder) > 0 then
-						local seen = trailDotSnapshot[folder.Name]
-						if not seen then
-							return folder
-						end
-
-						for _, child in ipairs(folder:GetChildren()) do
-							if not seen[child] then
-								return folder
-							end
-						end
-					end
-				end
-
-				return nil
 			end
 
 			local function getQuestProgress()
@@ -605,19 +535,21 @@ function MSKen.init(_context)
 				return tonumber(done)
 			end
 
-			-- Counted restocks since the last Stock click. Every logged kick
-			-- happened on the 4th spot fire in a row: the Stock click hands
-			-- the player 3 items, so after 3 restocks it's back to the box.
+			-- The Stock click hands the player 3 items (every logged kick was
+			-- the 4th spot fire in a row), so refill after every 3 restocks.
 			local ITEMS_PER_STOCK_VISIT = 3
-			local spotsSinceStock = 0
+			local itemsCarried = 0
 
-			-- Walks up to the target if needed and fires its ClickDetector,
-			-- guarded by the range gates. Only returns false on cancellation;
-			-- a skipped click is not fatal.
+			-- Only a part the player is basically standing on gets fired.
+			local SUPER_CLOSE_RANGE = 4
+
+			-- Fires the target's ClickDetector if the player is close enough.
+			-- Only returns false on cancellation; a skipped click is not fatal.
 			local function approachAndFire(target)
 				local root = getCharacterRoot()
 				local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
-				if clickDistance > 5 then
+
+				if clickDistance > SUPER_CLOSE_RANGE then
 					walkTo(target.Position, isCancelled)
 					setWKeyHeld(false)
 					setWalkTarget(nil)
@@ -629,9 +561,8 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
-				if clickDistance > 5.5 then
-					-- Never fire from outside the 6 stud range.
-					logFarm(("still %.1f studs from %s; skipping this click"):format(clickDistance, target.Name))
+				if clickDistance > SUPER_CLOSE_RANGE then
+					logFarm(("still %.1f studs from %s; not close enough, skipping this click"):format(clickDistance, target.Name))
 					return true
 				end
 
@@ -645,7 +576,6 @@ function MSKen.init(_context)
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
 				local progressBefore = getQuestProgress()
-				snapshotTrailDots()
 				-- Spots are one-shot, but the Stock box is revisited over and
 				-- over, so it stays fireable.
 				if target.Name ~= "Stock" then
@@ -654,7 +584,7 @@ function MSKen.init(_context)
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if target.Name == "Stock" then
-					spotsSinceStock = 0
+					itemsCarried = ITEMS_PER_STOCK_VISIT
 					return true
 				end
 
@@ -678,9 +608,9 @@ function MSKen.init(_context)
 					end
 
 					if counted then
-						spotsSinceStock += 1
-						logFarm(("server counted the restock (%s/12, %d since last stock visit)"):format(
-							tostring(getQuestProgress()), spotsSinceStock))
+						itemsCarried -= 1
+						logFarm(("server counted the restock (%s/12, %d items left before a refill)"):format(
+							tostring(getQuestProgress()), itemsCarried))
 					else
 						logFarm("quest counter did NOT increase after that fire - the server rejected it")
 					end
@@ -689,112 +619,118 @@ function MSKen.init(_context)
 				return true
 			end
 
-			-- Stock visit + up to 3 spots, repeated, with headroom for retries.
-			local MAX_CYCLES = 30
+			local function getTrailByIndex(index)
+				local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
+				return compass and compass:FindFirstChild(("%s_%d"):format(TRAIL_NAME_PREFIX, index)) or nil
+			end
 
-			for cycle = 1, MAX_CYCLES do
+			local function getSpotByIndex(index)
+				local spotsFolder = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Spots" })
+				local children = spotsFolder and spotsFolder:GetChildren()
+				return children and children[index] or nil
+			end
+
+			local function refillAtStock()
+				local stockPart = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Stock" })
+				if not (stockPart and stockPart:FindFirstChildOfClass("ClickDetector")) then
+					return false, "Stock part not found for the refill"
+				end
+
+				logFarm("heading to the Stock box for a refill")
+
+				-- Follow the stock trail if the game has one drawn, otherwise
+				-- walk straight to the box.
+				local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
+				local stockTrail = compass and compass:FindFirstChild(TRAIL_NAME_PREFIX)
+				if stockTrail and #getCompassDots(stockTrail) > 0 then
+					local moved, moveError = followCompassDots(stockTrail)
+					if not moved then
+						return false, moveError
+					end
+				else
+					walkTo(stockPart.Position, isCancelled)
+					setWKeyHeld(false)
+					setWalkTarget(nil)
+
+					if isCancelled() then
+						return false, "cancelled"
+					end
+				end
+
+				return approachAndFire(stockPart)
+			end
+
+			-- Spots strictly in order 1 through 12, with a Stock refill before
+			-- the first and after every third restock.
+			for spotIndex = 1, 12 do
 				if isCancelled() then
 					return false, "cancelled"
 				end
 
 				-- Once the tracker stops showing the restock text the job is done.
-				if cycle > 1 and not findRestockQuestLabel() then
+				if spotIndex > 1 and not findRestockQuestLabel() then
 					logFarm("quest tracker no longer shows the restock text; route done")
 					break
 				end
 
-				if spotsSinceStock >= ITEMS_PER_STOCK_VISIT then
-					-- Items used up: back to the Stock box before touching any
-					-- more spots. Follow the game's trail there if it draws
-					-- one quickly, otherwise walk straight to the box.
-					logFarm(("%d restocks since the last stock visit; returning to the Stock box"):format(spotsSinceStock))
+				if itemsCarried <= 0 then
+					local refilled, refillError = refillAtStock()
+					if not refilled then
+						return false, refillError
+					end
+				end
 
-					local stockTrail = nil
-					local stockTrailDeadline = os.clock() + 3
-					while os.clock() < stockTrailDeadline do
+				-- Follow this spot's own trail if it has dots (waiting briefly
+				-- for them to stream in), otherwise walk directly to the spot.
+				local trailFolder = getTrailByIndex(spotIndex)
+				local dotsDeadline = os.clock() + 5
+				while os.clock() < dotsDeadline do
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					trailFolder = getTrailByIndex(spotIndex)
+					if trailFolder and #getCompassDots(trailFolder) > 0 then
+						break
+					end
+
+					task.wait(0.15)
+				end
+
+				if trailFolder and #getCompassDots(trailFolder) > 0 then
+					local moved, moveError = followCompassDots(trailFolder)
+					if not moved then
+						return false, moveError
+					end
+				else
+					local spotPart = getSpotByIndex(spotIndex)
+					if not spotPart or not spotPart:IsA("BasePart") then
+						logFarm(("no trail and no spot part for #%d; skipping it"):format(spotIndex))
+					else
+						logFarm(("no dots for %s_%d; walking straight to spot #%d"):format(TRAIL_NAME_PREFIX, spotIndex, spotIndex))
+						walkTo(spotPart.Position, isCancelled)
+						setWKeyHeld(false)
+						setWalkTarget(nil)
+
 						if isCancelled() then
 							return false, "cancelled"
 						end
-
-						stockTrail = findFreshTrail()
-						if stockTrail then
-							break
-						end
-
-						task.wait(0.15)
 					end
+				end
 
-					if stockTrail then
-						logFarm("following the game's trail: " .. stockTrail.Name)
-						local moved, moveError = followCompassDots(stockTrail)
-						if not moved then
-							return false, moveError
-						end
-					end
-
-					local stockPart = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Stock" })
-					if not (stockPart and stockPart:FindFirstChildOfClass("ClickDetector")) then
-						return false, "Stock part not found for the refill"
-					end
-
-					local fired, fireError = approachAndFire(stockPart)
+				-- Fire only whatever un-fired part the player is right on top
+				-- of now - never anything farther away.
+				local target, targetDistance = nearestUnfiredPart()
+				if target and targetDistance <= SUPER_CLOSE_RANGE then
+					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
 				else
-					-- Follow ONLY the trail the game draws (its dots appeared
-					-- since the last fire) - never guess ahead of it.
-					local trailFolder = nil
-					local trailDeadline = os.clock() + 12
-					while os.clock() < trailDeadline do
-						if isCancelled() then
-							return false, "cancelled"
-						end
-
-						trailFolder = findFreshTrail()
-						if trailFolder then
-							logFarm("following the game's trail: " .. trailFolder.Name)
-							break
-						end
-
-						task.wait(0.15)
-					end
-
-					if not trailFolder then
-						local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
-						if compass then
-							local contents = {}
-							for _, child in ipairs(compass:GetChildren()) do
-								table.insert(contents, ("%s(%d)"):format(child.Name, #child:GetChildren()))
-							end
-							logFarm("CompassPaths contents at timeout: " .. table.concat(contents, ", "))
-						end
-
-						logFarm("no new compass trail appeared within 12s; route done")
-						break
-					end
-
-					local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
-					if not moved then
-						return false, moveError
-					end
-
-					local target, targetDistance = nearestClickTarget(trailEndPosition)
-					if not target then
-						return false, "no clickable job part near the end of the path"
-					end
-
-					if targetDistance > 3.5 then
-						-- The nearest part is too far from the trail end to be
-						-- this trail's objective. Firing anything else is an
-						-- invalid click, so fire nothing.
-						logFarm(("%s is %.1f studs from the trail end - not the objective; skipping the fire"):format(target.Name, targetDistance))
-					else
-						local fired, fireError = approachAndFire(target)
-						if not fired then
-							return false, fireError
-						end
-					end
+					logFarm(("no unfired part within %d studs (nearest: %s at %.1f studs); not firing"):format(
+						SUPER_CLOSE_RANGE,
+						target and target.Name or "none",
+						target and targetDistance or -1))
 				end
 			end
 
