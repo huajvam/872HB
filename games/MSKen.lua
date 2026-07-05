@@ -22,9 +22,6 @@ local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "P
 -- from a template at runtime, so their exact paths aren't stable.
 local RESTOCK_QUEST_TEXT = "You still need to restock"
 
-local STOCK_PART_PATH = { "Jobs", "Restock", "JLF", "Stock" }
-local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
-
 -- The game draws a trail of numbered dots (Dot_1, Dot_2, ...) guiding the
 -- player to the current job objective; the farm walks along them.
 local COMPASS_PATH_FOLDER_PATH = { "CompassPaths", "Path_Stocker" }
@@ -127,6 +124,19 @@ local function getCharacterRoot()
 	return character and character:FindFirstChild("HumanoidRootPart") or nil
 end
 
+local function getDotPosition(instance)
+	if instance:IsA("BasePart") then
+		return instance.Position
+	end
+	if instance:IsA("Model") then
+		return instance:GetPivot().Position
+	end
+	if instance:IsA("Attachment") then
+		return instance.WorldPosition
+	end
+	return nil
+end
+
 -- Returns the compass dots sorted by their number (Dot_1, Dot_2, ...).
 local function getCompassDots()
 	local folder = findWorkspaceChild(COMPASS_PATH_FOLDER_PATH)
@@ -134,12 +144,23 @@ local function getCompassDots()
 		return {}
 	end
 
+	local children = folder:GetChildren()
 	local dots = {}
-	for _, child in ipairs(folder:GetChildren()) do
-		local index = tonumber(child.Name:match("^Dot_(%d+)$"))
-		if index and child:IsA("BasePart") then
-			table.insert(dots, { index = index, part = child })
+	for _, child in ipairs(children) do
+		-- Any trailing number in the name counts as the dot index.
+		local index = tonumber(child.Name:match("(%d+)%s*$"))
+		local position = getDotPosition(child)
+		if index and position then
+			table.insert(dots, { index = index, position = position })
 		end
+	end
+
+	if #dots == 0 and #children > 0 then
+		local names = {}
+		for i = 1, math.min(#children, 8) do
+			names[i] = children[i].Name .. " (" .. children[i].ClassName .. ")"
+		end
+		logFarm(("Path_Stocker has %d children but none look like dots: %s"):format(#children, table.concat(names, ", ")))
 	end
 
 	table.sort(dots, function(a, b)
@@ -339,16 +360,6 @@ function MSKen.init(_context)
 				return false, "this executor does not support fireclickdetector"
 			end
 
-			local stockPart = findWorkspaceChild(STOCK_PART_PATH)
-			if not (stockPart and stockPart:IsA("BasePart") and stockPart:FindFirstChildOfClass("ClickDetector")) then
-				return false, "Stock part or its ClickDetector not found"
-			end
-
-			local spotsFolder = findWorkspaceChild(SPOTS_FOLDER_PATH)
-			if not spotsFolder then
-				return false, "Spots folder not found"
-			end
-
 			logFarm("restock route started; following the compass path")
 			setFarmCameraActive(true)
 
@@ -369,15 +380,15 @@ function MSKen.init(_context)
 				local closestIndex = 1
 				local closestDistance = math.huge
 				for i, dot in ipairs(dots) do
-					local distance = (dot.part.Position - root.Position).Magnitude
+					local distance = (dot.position - root.Position).Magnitude
 					if distance < closestDistance then
 						closestIndex = i
 						closestDistance = distance
 					end
 				end
 
-				local distanceToFirst = (dots[1].part.Position - root.Position).Magnitude
-				local distanceToLast = (dots[#dots].part.Position - root.Position).Magnitude
+				local distanceToFirst = (dots[1].position - root.Position).Magnitude
+				local distanceToLast = (dots[#dots].position - root.Position).Magnitude
 
 				local lastIndex, step
 				if distanceToLast >= distanceToFirst then
@@ -394,7 +405,7 @@ function MSKen.init(_context)
 						return false, "cancelled"
 					end
 
-					local walked, walkError = walkTo(dots[i].part.Position, isCancelled)
+					local walked, walkError = walkTo(dots[i].position, isCancelled)
 					if not walked then
 						if walkError == "cancelled" then
 							return false, "cancelled"
@@ -411,28 +422,32 @@ function MSKen.init(_context)
 				return true
 			end
 
-			-- The nearest clickable job part (the Stock box or one of the spots);
-			-- after walking the path this is what the trail was leading to.
+			-- The nearest clickable job part (a Stock box or restock spot from
+			-- any store); after walking the path this is what the trail was
+			-- leading to.
 			local function nearestClickTarget()
 				local root = getCharacterRoot()
 				if not root then
 					return nil
 				end
 
-				local best, bestDistance = nil, math.huge
-
-				local function consider(part)
-					if part:IsA("BasePart") and part:FindFirstChildOfClass("ClickDetector") then
-						local distance = (part.Position - root.Position).Magnitude
-						if distance < bestDistance then
-							best, bestDistance = part, distance
-						end
-					end
+				local jobsFolder = findWorkspaceChild({ "Jobs" })
+				if not jobsFolder then
+					return nil
 				end
 
-				consider(stockPart)
-				for _, spot in ipairs(spotsFolder:GetChildren()) do
-					consider(spot)
+				local best, bestDistance = nil, math.huge
+
+				for _, descendant in ipairs(jobsFolder:GetDescendants()) do
+					if descendant:IsA("ClickDetector") then
+						local part = descendant.Parent
+						if part and part:IsA("BasePart") then
+							local distance = (part.Position - root.Position).Magnitude
+							if distance < bestDistance then
+								best, bestDistance = part, distance
+							end
+						end
+					end
 				end
 
 				return best, bestDistance
@@ -545,9 +560,11 @@ function MSKen.init(_context)
 			logFarm("clicking the accept button")
 			clickGuiElement(acceptButton)
 
-			-- Verify the accepted job is the restock quest by scanning the quest
-			-- tracker for the restock text.
+			-- Verify the restock job is active: either the quest tracker shows
+			-- the restock text, or the game has drawn the stocker compass trail
+			-- (which only exists while the job is running).
 			local questLabel = nil
+			local trailIsUp = false
 			local questDeadline = os.clock() + 5
 			while os.clock() < questDeadline do
 				if isCancelled() then
@@ -559,15 +576,23 @@ function MSKen.init(_context)
 					break
 				end
 
+				if #getCompassDots() > 0 then
+					trailIsUp = true
+					break
+				end
+
 				task.wait(0.1)
 			end
 
-			if not questLabel then
-				logFarm("no label containing the restock text found under PlayerGui.Quests")
+			if questLabel then
+				logFarm(("restock quest confirmed via tracker: %q (label: %s)"):format(questLabel.Text, questLabel:GetFullName()))
+			elseif trailIsUp then
+				logFarm("restock quest confirmed via the compass trail (no tracker label found)")
+			else
+				logFarm("no restock tracker text and no compass trail; job does not seem active")
 				return false, "accepted job is not the restock quest"
 			end
 
-			logFarm(("restock quest confirmed: %q (label: %s)"):format(questLabel.Text, questLabel:GetFullName()))
 			Library:Notify("Job Found!", 3)
 
 			return runRestockRoute(isCancelled)
