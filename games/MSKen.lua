@@ -51,25 +51,28 @@ local function waitForGuiElement(pathParts, timeout, shouldCancel)
 	return nil
 end
 
--- A GuiObject only renders when it and every ancestor up to the ScreenGui are
--- visible, and the ScreenGui itself is enabled.
-local function isGuiElementVisible(element)
-	local current = element
+local PHONE_TOOL_NAME = "Phone"
 
-	while current and not current:IsA("ScreenGui") do
-		if current:IsA("GuiObject") and not current.Visible then
-			return false
-		end
-		current = current.Parent
-	end
-
-	return current ~= nil and current.Enabled == true
+-- The phone tool lives in the character model while equipped
+-- (e.g. workspace.<PlayerName>.Phone) and in the Backpack otherwise.
+local function isPhoneEquipped()
+	local character = LocalPlayer and LocalPlayer.Character
+	local tool = character and character:FindFirstChild(PHONE_TOOL_NAME)
+	return tool ~= nil and tool:IsA("Tool")
 end
 
-local function pressKey(keyCode)
-	VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-	task.wait(0.05)
-	VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+local function equipPhoneFromBackpack()
+	local character = LocalPlayer and LocalPlayer.Character
+	local backpack = LocalPlayer and LocalPlayer:FindFirstChildOfClass("Backpack")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local phoneTool = backpack and backpack:FindFirstChild(PHONE_TOOL_NAME)
+
+	if not humanoid or not phoneTool or not phoneTool:IsA("Tool") then
+		return false
+	end
+
+	humanoid:EquipTool(phoneTool)
+	return true
 end
 
 -- relativeX/relativeY pick the click point inside the element (0 = left/top edge,
@@ -131,10 +134,11 @@ function MSKen.init(_context)
 
 	do
 		local function runMoneyFarmSequence(isCancelled)
-			-- Only press 2 if the phone isn't already open on screen.
-			local phoneContainer = findGuiElement(PHONE_CONTAINER_PATH)
-			if not (phoneContainer and isGuiElementVisible(phoneContainer)) then
-				pressKey(Enum.KeyCode.Two)
+			-- Equip the phone tool from the backpack if it isn't already in hand.
+			if not isPhoneEquipped() then
+				if not equipPhoneFromBackpack() then
+					return false, "Phone tool not found in backpack"
+				end
 
 				local deadline = os.clock() + 5
 				repeat
@@ -142,17 +146,21 @@ function MSKen.init(_context)
 						return false, "cancelled"
 					end
 
-					phoneContainer = findGuiElement(PHONE_CONTAINER_PATH)
-					if phoneContainer and isGuiElementVisible(phoneContainer) then
+					if isPhoneEquipped() then
 						break
 					end
 
 					task.wait(0.1)
 				until os.clock() > deadline
 
-				if not (phoneContainer and isGuiElementVisible(phoneContainer)) then
-					return false, "Phone did not open after pressing 2"
+				if not isPhoneEquipped() then
+					return false, "Failed to equip the phone tool"
 				end
+			end
+
+			local phoneContainer = waitForGuiElement(PHONE_CONTAINER_PATH, 5, isCancelled)
+			if not phoneContainer then
+				return false, "Phone GUI not found after equipping"
 			end
 
 			task.wait(0.3)
