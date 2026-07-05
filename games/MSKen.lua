@@ -508,7 +508,7 @@ function MSKen.init(_context)
 					return nil
 				end
 
-				local jobsFolder = findWorkspaceChild({ "Jobs" })
+				local jobsFolder = findWorkspaceChild({ "Jobs", "Restock", "JLF" })
 				if not jobsFolder then
 					return nil
 				end
