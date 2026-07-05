@@ -56,11 +56,15 @@ local function pressKey(keyCode)
 	VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 end
 
-local function clickGuiElement(element)
-	local center = element.AbsolutePosition + element.AbsoluteSize / 2
+-- relativeX/relativeY pick the click point inside the element (0 = left/top edge,
+-- 0.5 = center, 1 = right/bottom edge); default is the center.
+local function clickGuiElement(element, relativeX, relativeY)
+	relativeX = relativeX or 0.5
+	relativeY = relativeY or 0.5
+
 	local inset = GuiService:GetGuiInset()
-	local x = center.X + inset.X
-	local y = center.Y + inset.Y
+	local x = element.AbsolutePosition.X + element.AbsoluteSize.X * relativeX + inset.X
+	local y = element.AbsolutePosition.Y + element.AbsoluteSize.Y * relativeY + inset.Y
 
 	VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
 	task.wait(0.05)
@@ -122,7 +126,7 @@ function MSKen.init(_context)
 			if isCancelled() then
 				return false, "cancelled"
 			end
-			clickGuiElement(jobsButton)
+			clickGuiElement(jobsButton, 0.25, 0.5)
 
 			local acceptButton = waitForGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
 			if not acceptButton then
