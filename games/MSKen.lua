@@ -14,6 +14,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G
 local HUAJ_HUB_MSKEN_INIT_KEY = "__huaj_hub_msken_initialized_v1"
 local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 
+local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
 local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
 
@@ -116,6 +117,17 @@ function MSKen.init(_context)
 	do
 		local function runMoneyFarmSequence(isCancelled)
 			pressKey(Enum.KeyCode.Two)
+
+			local phoneContainer = waitForGuiElement(PHONE_CONTAINER_PATH, 5, isCancelled)
+			if not phoneContainer then
+				return false, "Phone container not found (is the phone open?)"
+			end
+
+			task.wait(0.3)
+			if isCancelled() then
+				return false, "cancelled"
+			end
+			clickGuiElement(phoneContainer)
 
 			local jobsButton = waitForGuiElement(JOBS_BUTTON_PATH, 5, isCancelled)
 			if not jobsButton then
