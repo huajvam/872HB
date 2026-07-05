@@ -586,9 +586,9 @@ function MSKen.init(_context)
 					setWKeyHeld(false)
 				end
 
-				-- Stand at the part for a few seconds before firing, like a
-				-- player lining up the click.
-				if not sleepUnlessCancelled(3, isCancelled) then
+				-- Stand at the part for a moment before firing, like a player
+				-- lining up the click.
+				if not sleepUnlessCancelled(2, isCancelled) then
 					return false, "cancelled"
 				end
 
@@ -733,14 +733,28 @@ function MSKen.init(_context)
 					return token ~= runtimeState.moneyFarmToken or not Toggles.MoneyFarmEnabled.Value
 				end
 
-				local ok, message = runMoneyFarmSequence(isCancelled)
-				setWKeyHeld(false)
-				setFarmCameraActive(false)
-				if ok then
-					Library:Notify("Money Farm: restock route complete", 3)
-				elseif message ~= "cancelled" then
-					logFarm("stopped: " .. tostring(message))
-					Library:Notify("Money Farm: " .. tostring(message), 5)
+				-- Keep accepting and running jobs until the toggle is turned off.
+				while not isCancelled() do
+					local ok, message = runMoneyFarmSequence(isCancelled)
+					setWKeyHeld(false)
+					setFarmCameraActive(false)
+
+					if ok then
+						Library:Notify("Money Farm: restock route complete, grabbing the next job", 3)
+					elseif message ~= "cancelled" then
+						logFarm("stopped: " .. tostring(message))
+						Library:Notify("Money Farm: " .. tostring(message) .. " - retrying", 5)
+					end
+
+					if isCancelled() then
+						break
+					end
+
+					-- Breathe between jobs; a bit longer after a failure so a
+					-- broken state doesn't spam retries.
+					if not sleepUnlessCancelled(ok and 2 or 5, isCancelled) then
+						break
+					end
 				end
 			end)
 		end)
