@@ -7,7 +7,6 @@ local SaveManager = sharedRequire("ui/Linoria/addons/SaveManager.lua")
 
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
-local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -27,10 +26,6 @@ local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
 -- The game draws a trail of numbered dots (Dot_1, Dot_2, ...) guiding the
 -- player to the current job objective; the farm walks along them.
 local COMPASS_PATH_FOLDER_PATH = { "CompassPaths", "Path_Stocker" }
-
--- How high above each dot the HumanoidRootPart travels (dots sit on the floor,
--- the root part floats ~2.5 studs above it on a standing character).
-local DOT_HEIGHT_OFFSET = 2.5
 
 local function logFarm(message)
 	warn("[HuajHub][MoneyFarm] " .. tostring(message))
@@ -133,42 +128,35 @@ local function getCompassDots()
 	return dots
 end
 
--- Steps the HumanoidRootPart toward the target each frame at the speed set by
--- the CFrame Speed slider (studs per second), instead of teleporting.
-local function moveRootTo(targetPosition, isCancelled)
-	while true do
+-- Walks the character to a position with Humanoid:MoveTo — the same movement
+-- WASD produces, at the character's normal walk speed.
+local function walkTo(position, isCancelled)
+	local character = LocalPlayer and LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = getCharacterRoot()
+	if not humanoid or not root then
+		return false, "no character"
+	end
+
+	local deadline = os.clock() + 10
+
+	while os.clock() < deadline do
 		if isCancelled and isCancelled() then
-			return false
+			return false, "cancelled"
 		end
 
-		local root = getCharacterRoot()
-		if not root then
-			return false
-		end
-
-		local speed = 50
-		if Options and Options.MoneyFarmSpeed then
-			speed = Options.MoneyFarmSpeed.Value
-		end
-
-		if root.Anchored then
-			root.Anchored = false
-		end
-
-		local deltaTime = task.wait()
-		local offset = targetPosition - root.Position
-		local distance = offset.Magnitude
-		local step = math.max(speed, 1) * deltaTime
-
-		root.AssemblyLinearVelocity = Vector3.zero
-
-		if distance <= step then
-			root.CFrame = CFrame.new(targetPosition)
+		local offset = position - root.Position
+		local flatDistance = Vector3.new(offset.X, 0, offset.Z).Magnitude
+		if flatDistance <= 3 then
 			return true
 		end
 
-		root.CFrame = CFrame.new(root.Position + offset.Unit * step)
+		-- Re-issue every tick; MoveTo on its own gives up after 8 seconds.
+		humanoid:MoveTo(position)
+		task.wait(0.1)
 	end
+
+	return false, "timeout"
 end
 
 local function sleepUnlessCancelled(duration, isCancelled)
@@ -259,40 +247,6 @@ function MSKen.init(_context)
 
 			logFarm("restock route started; following the compass path")
 
-			-- Noclip while the route runs so the compass path can be followed in
-			-- a straight line without snagging on props or walls.
-			local noclipConnection = RunService.Stepped:Connect(function()
-				local character = LocalPlayer and LocalPlayer.Character
-				if not character then
-					return
-				end
-
-				for _, part in ipairs(character:GetDescendants()) do
-					if part:IsA("BasePart") and part.CanCollide then
-						part.CanCollide = false
-					end
-				end
-			end)
-
-			local function finish(ok, message)
-				noclipConnection:Disconnect()
-
-				local root = getCharacterRoot()
-				if root then
-					root.Anchored = false
-				end
-
-				-- Force a humanoid state change so it rebuilds its own collision
-				-- setup now that the noclip loop has stopped.
-				local character = LocalPlayer and LocalPlayer.Character
-				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-				if humanoid then
-					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-				end
-
-				return ok, message
-			end
-
 			-- Walks the compass dots starting from the one closest to the player,
 			-- heading toward whichever end of the trail is farther away (the
 			-- objective end).
@@ -335,9 +289,15 @@ function MSKen.init(_context)
 						return false, "cancelled"
 					end
 
-					local dotPosition = dots[i].part.Position + Vector3.new(0, DOT_HEIGHT_OFFSET, 0)
-					if not moveRootTo(dotPosition, isCancelled) then
-						return false, "cancelled"
+					local walked, walkError = walkTo(dots[i].part.Position, isCancelled)
+					if not walked then
+						if walkError == "cancelled" then
+							return false, "cancelled"
+						end
+
+						-- Stuck on this dot; keep going, the next one may free
+						-- the path.
+						logFarm(("timed out walking to dot %d; skipping it"):format(dots[i].index))
 					end
 				end
 
@@ -376,7 +336,7 @@ function MSKen.init(_context)
 
 			for cycle = 1, MAX_CYCLES do
 				if isCancelled() then
-					return finish(false, "cancelled")
+					return false, "cancelled"
 				end
 
 				-- Once the tracker stops showing the restock text the job is done.
@@ -389,30 +349,23 @@ function MSKen.init(_context)
 
 				local moved, moveError = followCompassDots()
 				if not moved then
-					return finish(false, moveError)
+					return false, moveError
 				end
 
 				local target, targetDistance = nearestClickTarget()
 				if not target then
-					return finish(false, "no clickable job part near the end of the path")
-				end
-
-				-- Anchor while parked; collisions are off, so this is what keeps
-				-- the character from falling through the floor.
-				local root = getCharacterRoot()
-				if root then
-					root.Anchored = true
+					return false, "no clickable job part near the end of the path"
 				end
 
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), targetDistance))
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if not sleepUnlessCancelled(5, isCancelled) then
-					return finish(false, "cancelled")
+					return false, "cancelled"
 				end
 			end
 
-			return finish(true)
+			return true
 		end
 
 		local function runMoneyFarmSequence(isCancelled)
@@ -526,15 +479,6 @@ function MSKen.init(_context)
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
 			Text = "Farm",
 			Default = false,
-		})
-
-		moneyFarmGroup:AddSlider("MoneyFarmSpeed", {
-			Text = "CFrame Speed",
-			Default = 50,
-			Min = 1,
-			Max = 100,
-			Rounding = 0,
-			Suffix = " studs/s",
 		})
 
 		Toggles.MoneyFarmEnabled:OnChanged(function(enabled)
