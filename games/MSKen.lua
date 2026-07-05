@@ -506,25 +506,23 @@ function MSKen.init(_context)
 				return best, bestDistance
 			end
 
-			-- Each trail is followed once: Path_Stocker to the Stock box first,
-			-- then whichever spot trail is closest, until all are done.
+			-- Each trail is followed once, in numeric order: Path_Stocker (the
+			-- Stock box) first, then Path_Stocker_1 through Path_Stocker_12.
 			local visitedTrails = {}
 
-			local function pickClosestTrail()
-				local root = getCharacterRoot()
-				if not root then
-					return nil
-				end
+			local function trailOrder(folder)
+				local suffix = folder.Name:match("_(%d+)$")
+				return suffix and tonumber(suffix) or 0
+			end
 
-				local best, bestDistance = nil, math.huge
+			local function pickNextTrail()
+				local best, bestOrder = nil, math.huge
 
 				for _, folder in ipairs(getTrailFolders()) do
-					if not visitedTrails[folder] then
-						for _, dot in ipairs(getCompassDots(folder)) do
-							local distance = (dot.position - root.Position).Magnitude
-							if distance < bestDistance then
-								best, bestDistance = folder, distance
-							end
+					if not visitedTrails[folder.Name] and #getCompassDots(folder) > 0 then
+						local order = trailOrder(folder)
+						if order < bestOrder then
+							best, bestOrder = folder, order
 						end
 					end
 				end
@@ -556,7 +554,7 @@ function MSKen.init(_context)
 						return false, "cancelled"
 					end
 
-					trailFolder = pickClosestTrail()
+					trailFolder = pickNextTrail()
 					if trailFolder then
 						break
 					end
@@ -575,7 +573,7 @@ function MSKen.init(_context)
 					return false, moveError
 				end
 
-				visitedTrails[trailFolder] = true
+				visitedTrails[trailFolder.Name] = true
 
 				local target, targetDistance = nearestClickTarget()
 				if not target then
