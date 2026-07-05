@@ -538,6 +538,13 @@ function MSKen.init(_context)
 			-- Only a part the player is basically standing on gets fired.
 			local SUPER_CLOSE_RANGE = 4
 
+			-- Server-verified rule: the Stock click loads 3 items, and a spot
+			-- click with none carried is an "invalid click" (kick on strike 2).
+			-- Every kicked run died on the 4th consecutive spot fire; the one
+			-- run that refilled every 3 reached 10/12 with zero rejects.
+			local ITEMS_PER_STOCK_VISIT = 3
+			local itemsCarried = 0
+
 			-- Fires the target's ClickDetector if the player is close enough.
 			-- Only returns false on cancellation; a skipped click is not fatal.
 			local function approachAndFire(target)
@@ -584,10 +591,14 @@ function MSKen.init(_context)
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
 				local progressBefore = getQuestProgress()
-				firedParts[target] = true
+				-- Spots are one-shot; the Stock box is refilled at repeatedly.
+				if target.Name ~= "Stock" then
+					firedParts[target] = true
+				end
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if target.Name == "Stock" then
+					itemsCarried = ITEMS_PER_STOCK_VISIT
 					return true
 				end
 
@@ -611,7 +622,9 @@ function MSKen.init(_context)
 					end
 
 					if counted then
-						logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
+						itemsCarried -= 1
+						logFarm(("server counted the restock (%s/12, %d carried items left)"):format(
+							tostring(getQuestProgress()), itemsCarried))
 					else
 						logFarm("quest counter did NOT increase after that fire - the server rejected it")
 					end
@@ -631,13 +644,13 @@ function MSKen.init(_context)
 				return children and children[index] or nil
 			end
 
-			local function clickStockOnce()
+			local function refillAtStock()
 				local stockPart = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Stock" })
 				if not (stockPart and stockPart:FindFirstChildOfClass("ClickDetector")) then
 					return false, "Stock part not found"
 				end
 
-				logFarm("heading to the Stock box to start the job")
+				logFarm("heading to the Stock box to pick up items")
 
 				-- Follow the stock trail if the game has one drawn, otherwise
 				-- walk straight to the box.
@@ -661,13 +674,8 @@ function MSKen.init(_context)
 				return approachAndFire(stockPart)
 			end
 
-			-- The job: click the Stock box ONCE, then click all 12 spots in
-			-- order. The player never goes back to the Stock box.
-			local stockClicked, stockError = clickStockOnce()
-			if not stockClicked then
-				return false, stockError
-			end
-
+			-- Spots strictly in order 1 through 12, picking up 3 items at the
+			-- Stock box whenever the carried ones run out.
 			for spotIndex = 1, 12 do
 				if isCancelled() then
 					return false, "cancelled"
@@ -677,6 +685,13 @@ function MSKen.init(_context)
 				if spotIndex > 1 and not findRestockQuestLabel() then
 					logFarm("quest tracker no longer shows the restock text; route done")
 					break
+				end
+
+				if itemsCarried <= 0 then
+					local refilled, refillError = refillAtStock()
+					if not refilled then
+						return false, refillError
+					end
 				end
 
 				-- Follow this spot's own trail if it has dots (waiting briefly
@@ -746,6 +761,13 @@ function MSKen.init(_context)
 				end
 
 				logFarm(("sweep %d: quest still active, hunting leftover spots"):format(sweep))
+
+				if itemsCarried <= 0 then
+					local refilled, refillError = refillAtStock()
+					if not refilled then
+						return false, refillError
+					end
+				end
 
 				local trailFolder = nil
 				for _, folder in ipairs(getTrailFolders()) do
