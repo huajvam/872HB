@@ -7,6 +7,7 @@ local SaveManager = sharedRequire("ui/Linoria/addons/SaveManager.lua")
 
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -125,6 +126,10 @@ local function moveRootTo(targetPosition, isCancelled)
 			speed = Options.MoneyFarmSpeed.Value
 		end
 
+		if root.Anchored then
+			root.Anchored = false
+		end
+
 		local deltaTime = task.wait()
 		local offset = targetPosition - root.Position
 		local distance = offset.Magnitude
@@ -237,8 +242,38 @@ function MSKen.init(_context)
 			platform.Transparency = 0.5
 			platform.Parent = workspace
 
+			-- Noclip while the route runs so the character can pass through the
+			-- ground instead of being pushed back out by collisions.
+			local noclipConnection = RunService.Stepped:Connect(function()
+				local character = LocalPlayer and LocalPlayer.Character
+				if not character then
+					return
+				end
+
+				for _, part in ipairs(character:GetDescendants()) do
+					if part:IsA("BasePart") and part.CanCollide then
+						part.CanCollide = false
+					end
+				end
+			end)
+
 			local function finish(ok, message)
+				noclipConnection:Disconnect()
 				platform:Destroy()
+
+				local root = getCharacterRoot()
+				if root then
+					root.Anchored = false
+				end
+
+				-- Force a humanoid state change so it rebuilds its own collision
+				-- setup now that the noclip loop has stopped.
+				local character = LocalPlayer and LocalPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+
 				return ok, message
 			end
 
@@ -263,6 +298,13 @@ function MSKen.init(_context)
 				platform.Position = underPosition - Vector3.new(0, 3.5, 0)
 				if not moveRootTo(underPosition, isCancelled) then
 					return false
+				end
+
+				-- Anchor in place while parked underground; the character has no
+				-- collisions right now, so this is what keeps it from falling.
+				root = getCharacterRoot()
+				if root then
+					root.Anchored = true
 				end
 
 				task.wait(0.2)
