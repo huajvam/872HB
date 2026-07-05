@@ -25,7 +25,7 @@ local SPOTS_FOLDER_PATH = { "Jobs", "Restock", "JLF", "Spots" }
 
 -- The Stock/Spots ClickDetectors have a 6 stud activation range, so the player
 -- is parked 4 studs below the target part: underground but still in range.
-local TELEPORT_DEPTH = 4
+local UNDERGROUND_DEPTH = 4
 
 local function findGuiElement(pathParts)
 	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -100,6 +100,40 @@ end
 local function getCharacterRoot()
 	local character = LocalPlayer and LocalPlayer.Character
 	return character and character:FindFirstChild("HumanoidRootPart") or nil
+end
+
+-- Steps the HumanoidRootPart toward the target each frame at the speed set by
+-- the CFrame Speed slider (studs per second), instead of teleporting.
+local function moveRootTo(targetPosition, isCancelled)
+	while true do
+		if isCancelled and isCancelled() then
+			return false
+		end
+
+		local root = getCharacterRoot()
+		if not root then
+			return false
+		end
+
+		local speed = 50
+		if Options and Options.MoneyFarmSpeed then
+			speed = Options.MoneyFarmSpeed.Value
+		end
+
+		local deltaTime = task.wait()
+		local offset = targetPosition - root.Position
+		local distance = offset.Magnitude
+		local step = math.max(speed, 1) * deltaTime
+
+		root.AssemblyLinearVelocity = Vector3.zero
+
+		if distance <= step then
+			root.CFrame = CFrame.new(targetPosition)
+			return true
+		end
+
+		root.CFrame = CFrame.new(root.Position + offset.Unit * step)
+	end
 end
 
 local function sleepUnlessCancelled(duration, isCancelled)
@@ -201,27 +235,40 @@ function MSKen.init(_context)
 				return ok, message
 			end
 
-			-- Moves the platform under the target, parks the player on it within
-			-- click range, and fires the part's ClickDetector.
-			local function teleportUnderAndClick(part)
+			-- Sinks the player underground, moves them under the target at the
+			-- slider speed, parks them on the platform within click range, and
+			-- fires the part's ClickDetector.
+			local function moveUnderAndClick(part)
 				local detector = part:FindFirstChildOfClass("ClickDetector")
 				local root = getCharacterRoot()
 				if not detector or not root then
 					return false
 				end
 
-				local underPosition = part.Position - Vector3.new(0, TELEPORT_DEPTH, 0)
+				local underPosition = part.Position - Vector3.new(0, UNDERGROUND_DEPTH, 0)
+
+				-- Go straight down first, then travel underground to the target.
+				local sinkPosition = Vector3.new(root.Position.X, underPosition.Y, root.Position.Z)
+				if not moveRootTo(sinkPosition, isCancelled) then
+					return false
+				end
+
 				platform.Position = underPosition - Vector3.new(0, 3.5, 0)
-				root.AssemblyLinearVelocity = Vector3.zero
-				root.CFrame = CFrame.new(underPosition)
+				if not moveRootTo(underPosition, isCancelled) then
+					return false
+				end
 
 				task.wait(0.2)
+				if isCancelled() then
+					return false
+				end
+
 				fireclickdetector(detector)
 				return true
 			end
 
-			if not teleportUnderAndClick(stockPart) then
-				return finish(false, "could not click the Stock box")
+			if not moveUnderAndClick(stockPart) then
+				return finish(false, isCancelled() and "cancelled" or "could not click the Stock box")
 			end
 
 			if not sleepUnlessCancelled(5, isCancelled) then
@@ -234,7 +281,9 @@ function MSKen.init(_context)
 				end
 
 				if spot:IsA("BasePart") and spot:FindFirstChildOfClass("ClickDetector") then
-					teleportUnderAndClick(spot)
+					if not moveUnderAndClick(spot) and isCancelled() then
+						return finish(false, "cancelled")
+					end
 
 					if not sleepUnlessCancelled(5, isCancelled) then
 						return finish(false, "cancelled")
@@ -342,6 +391,15 @@ function MSKen.init(_context)
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
 			Text = "Farm",
 			Default = false,
+		})
+
+		moneyFarmGroup:AddSlider("MoneyFarmSpeed", {
+			Text = "CFrame Speed",
+			Default = 50,
+			Min = 1,
+			Max = 100,
+			Rounding = 0,
+			Suffix = " studs/s",
 		})
 
 		Toggles.MoneyFarmEnabled:OnChanged(function(enabled)
