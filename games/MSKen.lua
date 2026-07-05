@@ -128,34 +128,77 @@ local function getCompassDots()
 	return dots
 end
 
--- Walks the character to a position with Humanoid:MoveTo — the same movement
--- WASD produces, at the character's normal walk speed.
-local function walkTo(position, isCancelled)
-	local character = LocalPlayer and LocalPlayer.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = getCharacterRoot()
-	if not humanoid or not root then
-		return false, "no character"
+-- Movement works like a real player: the W key is held down through
+-- VirtualInputManager and the camera is steered at the target each tick, so
+-- the character runs wherever the camera faces (default Roblox controls).
+local wKeyHeld = false
+
+local function setWKeyHeld(held)
+	if wKeyHeld == held then
+		return
 	end
 
+	wKeyHeld = held
+	pcall(function()
+		if held then
+			-- Double-tap W: the game starts running on the second press, so
+			-- tap once, release, then press again and keep it held.
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+			task.wait(0.05)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+			task.wait(0.05)
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+		else
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+		end
+	end)
+end
+
+local function steerCameraToward(position)
+	local camera = workspace.CurrentCamera
+	local root = getCharacterRoot()
+	if not camera or not root then
+		return
+	end
+
+	local look = position - root.Position
+	look = Vector3.new(look.X, 0, look.Z)
+	if look.Magnitude <= 0.001 then
+		return
+	end
+
+	local cameraPosition = camera.CFrame.Position
+	camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + look.Unit)
+end
+
+local function walkTo(position, isCancelled)
 	local deadline = os.clock() + 10
 
 	while os.clock() < deadline do
 		if isCancelled and isCancelled() then
+			setWKeyHeld(false)
 			return false, "cancelled"
+		end
+
+		local root = getCharacterRoot()
+		if not root then
+			setWKeyHeld(false)
+			return false, "no character"
 		end
 
 		local offset = position - root.Position
 		local flatDistance = Vector3.new(offset.X, 0, offset.Z).Magnitude
 		if flatDistance <= 3 then
+			-- W stays held between dots so the run is one smooth motion.
 			return true
 		end
 
-		-- Re-issue every tick; MoveTo on its own gives up after 8 seconds.
-		humanoid:MoveTo(position)
-		task.wait(0.1)
+		steerCameraToward(position)
+		setWKeyHeld(true)
+		task.wait(0.05)
 	end
 
+	setWKeyHeld(false)
 	return false, "timeout"
 end
 
@@ -209,6 +252,7 @@ function MSKen.init(_context)
 
 	Library:OnUnload(function()
 		runtimeState.moneyFarmToken += 1
+		setWKeyHeld(false)
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_INIT_KEY] = nil
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_LIBRARY_KEY] = nil
 	end)
@@ -301,6 +345,8 @@ function MSKen.init(_context)
 					end
 				end
 
+				-- Arrived; let go of W so the character stops for the click.
+				setWKeyHeld(false)
 				return true
 			end
 
@@ -495,6 +541,7 @@ function MSKen.init(_context)
 				end
 
 				local ok, message = runMoneyFarmSequence(isCancelled)
+				setWKeyHeld(false)
 				if ok then
 					Library:Notify("Money Farm: restock route complete", 3)
 				elseif message ~= "cancelled" then
