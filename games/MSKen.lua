@@ -720,6 +720,78 @@ function MSKen.init(_context)
 				end
 			end
 
+			-- Sweep phase: trail numbers and spot order can drift apart, which
+			-- can leave a straggler after the ordered pass. While the quest is
+			-- still active, follow whatever trail has dots (any number) or walk
+			-- to the nearest unfired spot directly, and click it.
+			for sweep = 1, 6 do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				if not findRestockQuestLabel() then
+					break
+				end
+
+				logFarm(("sweep %d: quest still active, hunting leftover spots"):format(sweep))
+
+				local trailFolder = nil
+				for _, folder in ipairs(getTrailFolders()) do
+					if #getCompassDots(folder) > 0 then
+						trailFolder = folder
+						break
+					end
+				end
+
+				if trailFolder then
+					logFarm("following leftover trail: " .. trailFolder.Name)
+					local moved, moveError = followCompassDots(trailFolder)
+					if not moved then
+						return false, moveError
+					end
+				else
+					local spotsFolder = findWorkspaceChild({ "Jobs", "Restock", "JLF", "Spots" })
+					local root = getCharacterRoot()
+					if not spotsFolder or not root then
+						break
+					end
+
+					local best, bestDistance = nil, math.huge
+					for _, spot in ipairs(spotsFolder:GetChildren()) do
+						if spot:IsA("BasePart") and not firedParts[spot] and spot:FindFirstChildOfClass("ClickDetector") then
+							local distance = (spot.Position - root.Position).Magnitude
+							if distance < bestDistance then
+								best, bestDistance = spot, distance
+							end
+						end
+					end
+
+					if not best then
+						logFarm("no unfired spots left; sweep done")
+						break
+					end
+
+					logFarm(("walking straight to a leftover spot %.1f studs away"):format(bestDistance))
+					walkTo(best.Position, isCancelled)
+					setWKeyHeld(false)
+					setWalkTarget(nil)
+
+					if isCancelled() then
+						return false, "cancelled"
+					end
+				end
+
+				local target, targetDistance = nearestUnfiredPart()
+				if target and targetDistance <= SUPER_CLOSE_RANGE then
+					local fired, fireError = approachAndFire(target)
+					if not fired then
+						return false, fireError
+					end
+				else
+					logFarm(("sweep: no unfired part within %d studs; retrying"):format(SUPER_CLOSE_RANGE))
+				end
+			end
+
 			return true
 		end
 
