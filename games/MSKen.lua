@@ -29,8 +29,29 @@ local RESTOCK_QUEST_TEXT = "You still need to restock"
 local COMPASS_FOLDER_NAME = "CompassPaths"
 local TRAIL_NAME_PREFIX = "Path_Stocker"
 
+-- Every log line also goes into a rolling history that gets dumped to a file
+-- when a kick/disconnect is detected, since the console dies with the kick.
+local FARM_LOG_FILE = "HuajHub_MSKen_log.txt"
+local farmLogHistory = {}
+
 local function logFarm(message)
-	warn("[HuajHub][MoneyFarm] " .. tostring(message))
+	local line = ("[%s] %s"):format(os.date("%H:%M:%S"), tostring(message))
+	warn("[HuajHub][MoneyFarm] " .. line)
+
+	table.insert(farmLogHistory, line)
+	if #farmLogHistory > 100 then
+		table.remove(farmLogHistory, 1)
+	end
+end
+
+local function dumpFarmLog(reason)
+	if type(writefile) ~= "function" then
+		return
+	end
+
+	pcall(function()
+		writefile(FARM_LOG_FILE, ("DUMP REASON: %s\n\n%s\n"):format(tostring(reason), table.concat(farmLogHistory, "\n")))
+	end)
 end
 
 local function findGuiElement(pathParts)
@@ -396,10 +417,21 @@ function MSKen.init(_context)
 		moneyFarmToken = 0,
 	}
 
+	-- Fires with the disconnect dialog text the moment a kick happens; logs it
+	-- and dumps the whole action history to a file so it can be read after
+	-- rejoining (the file lands in the executor's workspace folder).
+	local kickWatchConnection = GuiService.ErrorMessageChanged:Connect(function(errorMessage)
+		if errorMessage and errorMessage ~= "" then
+			logFarm("DISCONNECTED: " .. tostring(errorMessage))
+			dumpFarmLog("disconnect: " .. tostring(errorMessage))
+		end
+	end)
+
 	Library:OnUnload(function()
 		runtimeState.moneyFarmToken += 1
 		setWKeyHeld(false)
 		setFarmCameraActive(false)
+		kickWatchConnection:Disconnect()
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_INIT_KEY] = nil
 		GLOBAL_ENV[HUAJ_HUB_MSKEN_LIBRARY_KEY] = nil
 	end)
@@ -513,21 +545,35 @@ function MSKen.init(_context)
 					return nil
 				end
 
-				local best, bestDistance = nil, math.huge
+				local candidates = {}
 
 				for _, descendant in ipairs(jobsFolder:GetDescendants()) do
 					if descendant:IsA("ClickDetector") then
 						local part = descendant.Parent
 						if part and part:IsA("BasePart") and not firedParts[part] then
-							local distance = (part.Position - fromPosition).Magnitude
-							if distance < bestDistance then
-								best, bestDistance = part, distance
-							end
+							table.insert(candidates, {
+								part = part,
+								distance = (part.Position - fromPosition).Magnitude,
+							})
 						end
 					end
 				end
 
-				return best, bestDistance
+				if #candidates == 0 then
+					return nil
+				end
+
+				table.sort(candidates, function(a, b)
+					return a.distance < b.distance
+				end)
+
+				local summary = {}
+				for i = 1, math.min(3, #candidates) do
+					summary[i] = ("%s=%.1f"):format(candidates[i].part.Name, candidates[i].distance)
+				end
+				logFarm("click candidates (dist from trail end): " .. table.concat(summary, ", "))
+
+				return candidates[1].part, candidates[1].distance
 			end
 
 			-- Each trail is followed once, in numeric order: Path_Stocker (the
@@ -633,6 +679,8 @@ function MSKen.init(_context)
 						return false, "cancelled"
 					end
 
+					local questLabel = findRestockQuestLabel()
+					logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
 					logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 					firedParts[target] = true
 					fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
