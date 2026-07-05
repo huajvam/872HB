@@ -7,6 +7,7 @@ local SaveManager = sharedRequire("ui/Linoria/addons/SaveManager.lua")
 
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -198,7 +199,34 @@ end
 
 -- The default camera scripts overwrite CFrame writes every frame, so steering
 -- only sticks while the camera is Scriptable; saved type is restored after.
+-- While active, a RenderStepped loop eases the camera toward a chase view of
+-- the current steer target every rendered frame, which keeps both the view
+-- and the W-direction smooth.
 local savedCameraType = nil
+local steerTargetPosition = nil
+local steerConnection = nil
+
+local function updateFarmCamera(deltaTime)
+	local camera = workspace.CurrentCamera
+	local root = getCharacterRoot()
+	if not camera or not root or not steerTargetPosition then
+		return
+	end
+
+	local look = steerTargetPosition - root.Position
+	look = Vector3.new(look.X, 0, look.Z)
+	if look.Magnitude <= 0.001 then
+		return
+	end
+
+	look = look.Unit
+
+	-- Third-person chase view: behind and above the player, facing the target,
+	-- so held W (camera-relative) runs straight at it.
+	local desired = CFrame.lookAt(root.Position - look * 10 + Vector3.new(0, 6, 0), root.Position + look * 5)
+	local alpha = math.clamp((deltaTime or 0.016) * 8, 0, 1)
+	camera.CFrame = camera.CFrame:Lerp(desired, alpha)
+end
 
 local function setFarmCameraActive(active)
 	local camera = workspace.CurrentCamera
@@ -211,31 +239,26 @@ local function setFarmCameraActive(active)
 			savedCameraType = camera.CameraType
 		end
 		camera.CameraType = Enum.CameraType.Scriptable
-	elseif savedCameraType ~= nil then
-		camera.CameraType = savedCameraType
-		savedCameraType = nil
+
+		if not steerConnection then
+			steerConnection = RunService.RenderStepped:Connect(updateFarmCamera)
+		end
+	else
+		if steerConnection then
+			steerConnection:Disconnect()
+			steerConnection = nil
+		end
+		steerTargetPosition = nil
+
+		if savedCameraType ~= nil then
+			camera.CameraType = savedCameraType
+			savedCameraType = nil
+		end
 	end
 end
 
 local function steerCameraToward(position)
-	local camera = workspace.CurrentCamera
-	local root = getCharacterRoot()
-	if not camera or not root then
-		return
-	end
-
-	local look = position - root.Position
-	look = Vector3.new(look.X, 0, look.Z)
-	if look.Magnitude <= 0.001 then
-		return
-	end
-
-	look = look.Unit
-
-	-- Third-person chase view: behind and above the player, facing the target,
-	-- so held W (camera-relative) runs straight at it.
-	local cameraPosition = root.Position - look * 10 + Vector3.new(0, 6, 0)
-	camera.CFrame = CFrame.lookAt(cameraPosition, root.Position + look * 5)
+	steerTargetPosition = position
 end
 
 local function walkTo(position, isCancelled)
@@ -417,8 +440,10 @@ function MSKen.init(_context)
 					end
 				end
 
-				-- Arrived; let go of W so the character stops for the click.
+				-- Arrived; let go of W and freeze the camera so the character
+				-- stops for the click.
 				setWKeyHeld(false)
+				steerCameraToward(nil)
 				return true
 			end
 
