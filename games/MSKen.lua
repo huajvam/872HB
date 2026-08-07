@@ -16,6 +16,7 @@ local HUAJ_HUB_MSKEN_INIT_KEY = "__huaj_hub_msken_initialized_v1"
 local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 
 local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
+local JOBS_SCREEN_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
 local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
 -- Any label under PlayerGui.Quests containing this text marks the restock job
@@ -89,6 +90,50 @@ local function findRestockQuestLabel()
 				return descendant
 			end
 		end
+	end
+
+	return nil
+end
+
+-- A GuiObject only renders when it and every ancestor are visible and its
+-- ScreenGui is enabled. Elements stay in the tree while hidden, so paths
+-- alone are not enough to know what is actually on screen.
+local function isGuiElementVisible(element)
+	local current = element
+
+	while current and not current:IsA("ScreenGui") do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		current = current.Parent
+	end
+
+	return current ~= nil and current.Enabled == true
+end
+
+local function findVisibleGuiElement(pathParts)
+	local element = findGuiElement(pathParts)
+	if element and isGuiElementVisible(element) then
+		return element
+	end
+
+	return nil
+end
+
+local function waitForVisibleGuiElement(pathParts, timeout, shouldCancel)
+	local deadline = os.clock() + timeout
+
+	while os.clock() < deadline do
+		if shouldCancel and shouldCancel() then
+			return nil
+		end
+
+		local element = findVisibleGuiElement(pathParts)
+		if element then
+			return element
+		end
+
+		task.wait(0.1)
 	end
 
 	return nil
@@ -1054,9 +1099,9 @@ function MSKen.init(_context)
 				end
 			end
 
-			local phoneContainer = waitForGuiElement(PHONE_CONTAINER_PATH, 5, isCancelled)
+			local phoneContainer = waitForVisibleGuiElement(PHONE_CONTAINER_PATH, 5, isCancelled)
 			if not phoneContainer then
-				return false, "Phone GUI not found after equipping"
+				return false, "Phone GUI not visible after equipping"
 			end
 
 			task.wait(0.3)
@@ -1066,30 +1111,47 @@ function MSKen.init(_context)
 			logFarm("phone equipped; clicking phone container")
 			clickGuiElement(phoneContainer)
 
-			local jobsButton = waitForGuiElement(JOBS_BUTTON_PATH, 5, isCancelled)
-			if not jobsButton then
-				return false, "Jobs button not found (is the phone open?)"
-			end
+			-- The phone may reopen on whichever screen it was left on. Only
+			-- press the Jobs button when it is actually on screen; clicking a
+			-- hidden element's coordinates hits whatever is really there.
+			if findVisibleGuiElement(JOBS_SCREEN_PATH) then
+				logFarm("jobs screen is already open; skipping the jobs button")
+			else
+				local jobsButton = waitForVisibleGuiElement(JOBS_BUTTON_PATH, 5, isCancelled)
+				if not jobsButton then
+					return false, "Jobs button not visible on the phone"
+				end
 
-			task.wait(0.3)
-			if isCancelled() then
-				return false, "cancelled"
-			end
-			logFarm("clicking the job frame for 3 seconds")
-			-- Click the job frame repeatedly for 3 seconds to make sure it registers,
-			-- then move on to the accept button.
-			local clickDeadline = os.clock() + 3
-			while os.clock() < clickDeadline do
+				task.wait(0.3)
 				if isCancelled() then
 					return false, "cancelled"
 				end
-				clickGuiElement(jobsButton, 0.75, 0.5)
-				task.wait(0.15)
+
+				-- Click it until the jobs screen actually opens, instead of
+				-- spamming blindly for a fixed time.
+				logFarm("opening the jobs screen")
+				local openDeadline = os.clock() + 5
+				while os.clock() < openDeadline do
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					if findVisibleGuiElement(JOBS_SCREEN_PATH) then
+						break
+					end
+
+					clickGuiElement(jobsButton, 0.75, 0.5)
+					task.wait(0.35)
+				end
+
+				if not findVisibleGuiElement(JOBS_SCREEN_PATH) then
+					return false, "jobs screen did not open"
+				end
 			end
 
-			local acceptButton = waitForGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
+			local acceptButton = waitForVisibleGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
 			if not acceptButton then
-				return false, "Accept button not found on the jobs screen"
+				return false, "Accept button not visible on the jobs screen"
 			end
 
 			task.wait(0.3)
