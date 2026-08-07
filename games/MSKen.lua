@@ -83,6 +83,39 @@ local function isGuiElementVisible(element)
 	return current ~= nil and current.Enabled == true
 end
 
+-- Reads the restock counter off the quest tracker. Several rows can carry
+-- restock text at once - the live one plus stale leftovers from earlier jobs
+-- that still say "0 / 12" - so prefer rows actually on screen, and take the
+-- highest count among them rather than whichever comes first in the tree.
+local function getRestockProgress()
+	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local questsGui = playerGui and playerGui:FindFirstChild("Quests")
+	if not questsGui then
+		return nil
+	end
+
+	local visibleBest, anyBest = nil, nil
+
+	for _, descendant in ipairs(questsGui:GetDescendants()) do
+		if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+			local text = descendant.Text
+			if text:find(RESTOCK_QUEST_TEXT, 1, true) or text:lower():find("restock", 1, true) then
+				local count = tonumber(text:match("(%d+)%s*/"))
+				if count then
+					if isGuiElementVisible(descendant) and (not visibleBest or count > visibleBest) then
+						visibleBest = count
+					end
+					if not anyBest or count > anyBest then
+						anyBest = count
+					end
+				end
+			end
+		end
+	end
+
+	return visibleBest or anyBest
+end
+
 -- Finds a quest row showing the restock text. Quest rows are clones of a
 -- template row and keep that name, so they cannot be told apart by name -
 -- only by whether they are actually rendered. requireVisible = true asks
@@ -606,13 +639,7 @@ function MSKen.init(_context)
 				return candidates[1].part, candidates[1].distance, candidates[2] and candidates[2].distance or nil
 			end
 
-			local function getQuestProgress()
-				-- Read the counter from any matching row, visible or not: the
-				-- text is what matters here, not whether it is on screen.
-				local label = findRestockQuestLabel(false)
-				local done = label and label.Text:match("(%d+)%s*/")
-				return tonumber(done)
-			end
+			local getQuestProgress = getRestockProgress
 
 			-- Highest restock count the server has confirmed this job.
 			local bestProgress = 0
@@ -620,6 +647,7 @@ function MSKen.init(_context)
 			-- Counter value from just before the last click, checked on the
 			-- next cycle so the player never stands around waiting for it.
 			local pendingProgressCheck = nil
+			local lastFiredTarget = nil
 
 			local function noteProgress()
 				local progress = getQuestProgress()
@@ -639,10 +667,16 @@ function MSKen.init(_context)
 				if progressNow and progressNow > pendingProgressCheck then
 					logFarm(("server counted the restock (%d/12)"):format(noteProgress()))
 				elseif progressNow then
-					logFarm(("counter still at %d/12 after the last click - it may have been rejected"):format(progressNow))
+					logFarm(("counter still at %d/12 after the last click - putting that shelf back in the queue"):format(progressNow))
+					-- The click did not take, so let the shelf be targeted
+					-- again instead of leaving the job one short.
+					if lastFiredTarget then
+						firedParts[lastFiredTarget] = nil
+					end
 				end
 
 				pendingProgressCheck = nil
+				lastFiredTarget = nil
 			end
 
 			-- The job is only finished once 12 restocks are counted, or the
@@ -819,6 +853,7 @@ function MSKen.init(_context)
 				-- next shelf right away. The count is picked up on the next
 				-- cycle by reportProgress().
 				pendingProgressCheck = progressBefore
+				lastFiredTarget = (target.Name ~= "Stock") and target or nil
 				return true
 			end
 
