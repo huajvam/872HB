@@ -855,7 +855,7 @@ function MSKen.init(_context)
 				return false, stockError
 			end
 
-			for cycle = 1, 20 do
+			for cycle = 1, 30 do
 				if isCancelled() then
 					return false, "cancelled"
 				end
@@ -864,9 +864,12 @@ function MSKen.init(_context)
 					break
 				end
 
-				-- Hunt the trail the game drew after the last click.
+				-- Prefer the trail the game drew after the last click; if the
+				-- redraw is missed, fall back to any trail that still has dots
+				-- rather than abandoning the job.
 				local trailFolder = nil
-				local trailDeadline = os.clock() + 12
+				local freshDeadline = os.clock() + 5
+				local trailDeadline = os.clock() + 10
 				while os.clock() < trailDeadline do
 					if isCancelled() then
 						return false, "cancelled"
@@ -878,37 +881,69 @@ function MSKen.init(_context)
 						break
 					end
 
+					if os.clock() > freshDeadline then
+						for _, folder in ipairs(getTrailFolders()) do
+							if #getCompassDots(folder) > 0 then
+								trailFolder = folder
+								logFarm("no fresh redraw seen; falling back to " .. folder.Name)
+								break
+							end
+						end
+
+						if trailFolder then
+							break
+						end
+					end
+
 					task.wait(0.15)
 				end
 
-				if not trailFolder then
+				local target, targetDistance
+
+				if trailFolder then
+					local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
+					if not moved then
+						return false, moveError
+					end
+
+					target, targetDistance = nearestUnfiredPartTo(trailEndPosition)
+					if target and targetDistance > 3.5 then
+						logFarm(("%s is %.1f studs from the trail's last dot - not the objective"):format(
+							target.Name, targetDistance))
+						target = nil
+					end
+				else
+					-- No trail at all: walk to the closest shelf we have not
+					-- restocked yet and use that.
 					local compass = workspace:FindFirstChild(COMPASS_FOLDER_NAME)
 					if compass then
 						local contents = {}
 						for _, child in ipairs(compass:GetChildren()) do
 							table.insert(contents, ("%s(%d)"):format(child.Name, #child:GetChildren()))
 						end
-						logFarm("CompassPaths contents at timeout: " .. table.concat(contents, ", "))
+						logFarm("CompassPaths at timeout: " .. table.concat(contents, ", "))
 					end
 
-					logFarm("no new compass trail appeared within 12s; moving to the sweep")
-					break
+					local candidate = nearestUnfiredPartTo(nil)
+					if candidate then
+						logFarm(("no trail available; walking to the nearest unrestocked shelf (%d/12 done)"):format(bestProgress))
+						walkTo(candidate.Position, isCancelled)
+						setWKeyHeld(false)
+						setWalkTarget(nil)
+
+						if isCancelled() then
+							return false, "cancelled"
+						end
+
+						target = candidate
+					end
 				end
 
-				local moved, moveError, trailEndPosition = followCompassDots(trailFolder)
-				if not moved then
-					return false, moveError
-				end
-
-				local target, targetDistance = nearestUnfiredPartTo(trailEndPosition)
-				if target and targetDistance <= 3.5 then
+				if target then
 					local fired, fireError = approachAndFire(target)
 					if not fired then
 						return false, fireError
 					end
-				elseif target then
-					logFarm(("%s is %.1f studs from the trail's last dot - not the objective; not firing"):format(
-						target.Name, targetDistance))
 				end
 			end
 
@@ -916,7 +951,7 @@ function MSKen.init(_context)
 			-- can leave a straggler after the ordered pass. While the quest is
 			-- still active, follow whatever trail has dots (any number) or walk
 			-- to the nearest unfired spot directly, and click it.
-			for sweep = 1, 6 do
+			for sweep = 1, 14 do
 				if isCancelled() then
 					return false, "cancelled"
 				end
@@ -992,7 +1027,13 @@ function MSKen.init(_context)
 				end
 			end
 
-			return true
+			-- Only a full 12/12 counts as a completed route; anything less is
+			-- reported as the failure it is, with the count it reached.
+			if bestProgress >= 12 then
+				return true
+			end
+
+			return false, ("route ended at %d/12 restocks"):format(bestProgress)
 		end
 
 		local function runMoneyFarmSequence(isCancelled)
