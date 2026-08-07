@@ -438,6 +438,64 @@ local function setMovementOverrideActive(active)
 	end
 end
 
+-- Jumps when something is in the way. Called every walk tick, so it uses a
+-- short cooldown to hop repeatedly over a stubborn obstacle rather than
+-- pressing jump once and hoping.
+local lastJumpAt = 0
+
+local function jumpIfPossible()
+	if os.clock() - lastJumpAt < 0.45 then
+		return
+	end
+
+	local character = LocalPlayer and LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+
+	-- Only jump from the ground; spamming it mid-air does nothing.
+	local state = humanoid:GetState()
+	if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+		return
+	end
+
+	lastJumpAt = os.clock()
+	humanoid.Jump = true
+end
+
+-- True when something solid sits right in front of the character along its
+-- path - a crate, a shelf corner, a step it cannot climb.
+local function isBlockedAhead(root, targetPosition)
+	local offset = targetPosition - root.Position
+	local flat = Vector3.new(offset.X, 0, offset.Z)
+	if flat.Magnitude < 0.5 then
+		return false
+	end
+
+	local character = LocalPlayer and LocalPlayer.Character
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { character }
+
+	local direction = flat.Unit * math.min(4, flat.Magnitude)
+
+	-- Check at knee and chest height: a low obstacle is jumpable, and a hit at
+	-- both heights still means the way forward is blocked.
+	local origins = {
+		root.Position - Vector3.new(0, 1.5, 0),
+		root.Position,
+	}
+
+	for _, origin in ipairs(origins) do
+		if workspace:Raycast(origin, direction, rayParams) then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function walkTo(position, isCancelled, timeout)
 	local deadline = os.clock() + (timeout or 10)
 	local lastPosition = nil
@@ -463,25 +521,23 @@ local function walkTo(position, isCancelled, timeout)
 			return true
 		end
 
-		-- If W is held but the character stops making progress, it's snagged
-		-- on something - hop over it like a player would.
-		if lastPosition == nil or (root.Position - lastPosition).Magnitude > 0.5 then
+		-- Hop over whatever is in the way before it becomes a full stall.
+		if isBlockedAhead(root, position) then
+			jumpIfPossible()
+		end
+
+		-- If the character stops making progress anyway, it is properly
+		-- snagged: keep jumping until it breaks free.
+		if lastPosition == nil or (root.Position - lastPosition).Magnitude > 0.3 then
 			lastPosition = root.Position
 			lastProgressAt = os.clock()
-		elseif wKeyHeld and os.clock() - lastProgressAt > 1.5 then
+		elseif wKeyHeld and os.clock() - lastProgressAt > 0.7 then
 			if not stallReported then
 				stallReported = true
 				logFarm("movement stalled; jumping to get unstuck")
 			end
 
-			local character = LocalPlayer and LocalPlayer.Character
-			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid.Jump = true
-			end
-
-			-- Give the jump a moment to carry before judging progress again.
-			lastProgressAt = os.clock()
+			jumpIfPossible()
 		end
 
 		setWalkTarget(position)
