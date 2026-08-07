@@ -116,6 +116,31 @@ local function isPhoneEquipped()
 	return tool ~= nil and tool:IsA("Tool")
 end
 
+-- Puts the phone (or anything else) away, the way a player does before
+-- getting to work. Returns what was unequipped, for logging.
+local function unequipAllTools()
+	local character = LocalPlayer and LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not character or not humanoid then
+		return nil
+	end
+
+	local held = character:FindFirstChildOfClass("Tool")
+	if not held then
+		return nil
+	end
+
+	local heldName = held.Name
+	humanoid:UnequipTools()
+	return heldName
+end
+
+local function getEquippedToolName()
+	local character = LocalPlayer and LocalPlayer.Character
+	local tool = character and character:FindFirstChildOfClass("Tool")
+	return tool and tool.Name or "none"
+end
+
 local function equipPhoneFromBackpack()
 	local character = LocalPlayer and LocalPlayer.Character
 	local backpack = LocalPlayer and LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -382,6 +407,33 @@ local function clickGuiElement(element, relativeX, relativeY)
 	VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
 end
 
+-- Brings the character to a complete stop and reports its state, so a click
+-- happens from a settled, standing player the way a manual one does.
+local function settleBeforeClick()
+	local character = LocalPlayer and LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = getCharacterRoot()
+	if not humanoid or not root then
+		return "no character"
+	end
+
+	humanoid:Move(Vector3.zero, false)
+
+	-- Wait for the character to actually stop drifting.
+	local deadline = os.clock() + 1.5
+	while os.clock() < deadline do
+		if root.AssemblyLinearVelocity.Magnitude < 1 then
+			break
+		end
+		task.wait(0.1)
+	end
+
+	return ("velocity=%.1f state=%s moveDir=%.1f"):format(
+		root.AssemblyLinearVelocity.Magnitude,
+		tostring(humanoid:GetState()),
+		humanoid.MoveDirection.Magnitude)
+end
+
 function MSKen.init(_context)
 	if GLOBAL_ENV[HUAJ_HUB_MSKEN_INIT_KEY] then
 		local existingLibrary = GLOBAL_ENV[HUAJ_HUB_MSKEN_LIBRARY_KEY]
@@ -439,11 +491,17 @@ function MSKen.init(_context)
 
 	do
 		local function runRestockRoute(isCancelled)
-			if type(fireclickdetector) ~= "function" then
-				return false, "this executor does not support fireclickdetector"
+			logFarm("restock route started; following the compass path")
+
+			-- Put the phone away before working the shelves; clicking them
+			-- with the phone still in hand is not a state a real player is
+			-- ever in when restocking.
+			local putAway = unequipAllTools()
+			if putAway then
+				logFarm("put away the " .. putAway .. " before starting the route")
+				task.wait(0.4)
 			end
 
-			logFarm("restock route started; following the compass path")
 			setMovementOverrideActive(true)
 
 			-- Walks a trail's dots strictly in numeric order: Dot_1, Dot_2, ...
@@ -584,9 +642,11 @@ function MSKen.init(_context)
 			-- the one run that never earned an invalid click had 8-12s between
 			-- clicks. The anti-cheat is counting clicks per unit time, not
 			-- checking which shelf, so keep the cadence human.
-			local MIN_SECONDS_BETWEEN_FIRES = 9
-			local MAX_FIRES_PER_WINDOW = 3
-			local FIRE_WINDOW_SECONDS = 45
+			-- Manual fast clicking never gets kicked, so speed itself is fine;
+			-- keep only a light gap so the cadence isn't machine-perfect.
+			local MIN_SECONDS_BETWEEN_FIRES = 2
+			local MAX_FIRES_PER_WINDOW = 12
+			local FIRE_WINDOW_SECONDS = 30
 			local fireTimes = {}
 
 			-- Blocks until firing again is within the pacing limits.
@@ -661,15 +721,22 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
+				-- Stop moving and let go of the keys first: fire from a settled,
+				-- standing character, exactly like a manual Dex click.
+				setWKeyHeld(false)
+				setWalkTarget(nil)
+				local characterState = settleBeforeClick()
+
 				local questLabel = findRestockQuestLabel()
 				logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
+				logFarm(("character at click: %s holding=%s"):format(characterState, getEquippedToolName()))
 				logFarm(("firing ClickDetector on %s (%.1f studs away)"):format(target:GetFullName(), clickDistance))
 
 				local progressBefore = getQuestProgress()
 				snapshotTrailDots()
-				firedParts[target] = true
 				table.insert(fireTimes, os.clock())
-				-- Exactly one detector per call, and never one already fired.
+
+				firedParts[target] = true
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if target.Name == "Stock" then
