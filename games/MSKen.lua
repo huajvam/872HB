@@ -77,10 +77,17 @@ local function findRestockQuestLabel()
 		return nil
 	end
 
+	-- The tracker scrambles its text while animating a counter change, so
+	-- match loosely: the "restock" word survives most frames, and the
+	-- "N / 12" counter form is a fallback when it doesn't.
 	for _, descendant in ipairs(questsGui:GetDescendants()) do
-		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
-			and descendant.Text:find(RESTOCK_QUEST_TEXT, 1, true) then
-			return descendant
+		if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+			local text = descendant.Text
+			if text:find(RESTOCK_QUEST_TEXT, 1, true)
+				or text:lower():find("restock", 1, true)
+				or text:match("%d+%s*/%s*12") then
+				return descendant
+			end
 		end
 	end
 
@@ -598,6 +605,43 @@ function MSKen.init(_context)
 				return tonumber(done)
 			end
 
+			-- Highest restock count the server has confirmed this job.
+			local bestProgress = 0
+
+			local function noteProgress()
+				local progress = getQuestProgress()
+				if progress and progress > bestProgress then
+					bestProgress = progress
+				end
+				return bestProgress
+			end
+
+			-- The job is only finished once 12 restocks are counted, or the
+			-- tracker stays gone for several seconds. A single miss means the
+			-- label is mid-animation, not that the job ended.
+			local function jobIsFinished()
+				if bestProgress >= 12 then
+					logFarm("all 12 restocks counted; job complete")
+					return true
+				end
+
+				local deadline = os.clock() + 4
+				while os.clock() < deadline do
+					if isCancelled() then
+						return false
+					end
+
+					if findRestockQuestLabel() then
+						return false
+					end
+
+					task.wait(0.25)
+				end
+
+				logFarm(("quest tracker gone for 4s at %d/12; treating the job as over"):format(bestProgress))
+				return true
+			end
+
 			-- Dot instances recorded just before each fire; a trail containing
 			-- any dot the snapshot has never seen is the one the game drew
 			-- after that click - its CURRENT target. The server validates
@@ -763,7 +807,7 @@ function MSKen.init(_context)
 					end
 
 					if counted then
-						logFarm(("server counted the restock (%s/12)"):format(tostring(getQuestProgress())))
+						logFarm(("server counted the restock (%d/12)"):format(noteProgress()))
 					else
 						logFarm("quest counter did NOT increase after that fire - the server rejected it")
 					end
@@ -816,9 +860,7 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
-				-- Once the tracker stops showing the restock text the job is done.
-				if not findRestockQuestLabel() then
-					logFarm("quest tracker no longer shows the restock text; route done")
+				if jobIsFinished() then
 					break
 				end
 
@@ -879,11 +921,11 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
-				if not findRestockQuestLabel() then
+				if jobIsFinished() then
 					break
 				end
 
-				logFarm(("sweep %d: quest still active, hunting leftover spots"):format(sweep))
+				logFarm(("sweep %d: quest still active at %d/12, hunting leftover spots"):format(sweep, bestProgress))
 
 				local trailFolder = nil
 				for _, folder in ipairs(getTrailFolders()) do
