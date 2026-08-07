@@ -35,17 +35,17 @@ local RESTOCK_QUEST_TEXT = "You still need to restock"
 -- "Pickup & Deliver the package to the customer's location!"
 local DELIVERY_QUEST_TEXT = "Deliver the package"
 
--- Delivery route waypoints, teleported through in order: the shop, each drop
--- off, and finally back to the shop before the next job is taken.
-local DELIVERY_ROUTE = {
-	CFrame.new(140.826431, 4.04428768, 77.9906464, -0.999805689, 5.95979444e-09, -0.019713087, 6.71388101e-09, 1, -3.81869043e-08, 0.019713087, -3.83118319e-08, -0.999805689),
+-- Delivery route: three waypoints once after accepting the job, then the last
+-- two are cycled back and forth until the farm is switched off.
+local DELIVERY_INTRO_WAYPOINTS = {
+	CFrame.new(140.444855, 4.04428864, 80.8627167, -0.992392361, -4.05390299e-09, 0.123115458, 6.42742837e-09, 1, 8.47369961e-08, -0.123115458, 8.48836592e-08, -0.992392361),
 	CFrame.new(158.564713, 1.50003231, 89.5151978, 1, 0, 0, 0, 1, 0, 0, 0, 1),
 	CFrame.new(-719.91272, 1.49971616, -179.245575, 1, 0, 0, 0, 1, 0, 0, 0, 1),
+}
+
+local DELIVERY_LOOP_WAYPOINTS = {
 	CFrame.new(-41.7301788, 1.49793923, -235.875366, -0.699219465, 0.0016660376, -0.714905262, -7.47049926e-05, 0.999997079, 0.00240349071, 0.714907169, 0.0017339742, -0.699217319),
 	CFrame.new(-438.138367, 1.39754319, -772.952698, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-	CFrame.new(-139.964081, 1.50791931, -325.238983, 1, -0, 0, 0, 0.999998629, 0.00164011808, -0, -0.00164011808, 0.999998629),
-	CFrame.new(158.564713, 1.50003231, 89.5151978, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-	CFrame.new(140.826431, 4.04428768, 77.9906464, -0.999805689, 5.95979444e-09, -0.019713087, 6.71388101e-09, 1, -3.81869043e-08, 0.019713087, -3.83118319e-08, -0.999805689),
 }
 
 -- How long to stand at each waypoint before moving to the next.
@@ -1445,28 +1445,52 @@ function MSKen.init(_context)
 				task.wait(0.4)
 			end
 
-			-- Teleport through the delivery route in order; the last waypoint
-			-- puts the player back at the shop for the next job.
-			for index, waypoint in ipairs(DELIVERY_ROUTE) do
-				if isCancelled() then
-					return false, "cancelled"
-				end
-
+			local function hopTo(waypoint, label)
 				if not teleportTo(waypoint) then
 					return false, "no character to teleport"
 				end
 
 				local position = waypoint.Position
-				logFarm(("delivery: waypoint %d/%d (%.1f, %.1f, %.1f)"):format(
-					index, #DELIVERY_ROUTE, position.X, position.Y, position.Z))
+				logFarm(("delivery: %s (%.1f, %.1f, %.1f)"):format(label, position.X, position.Y, position.Z))
 
 				if not sleepUnlessCancelled(DELIVERY_WAYPOINT_DWELL, isCancelled) then
 					return false, "cancelled"
 				end
+
+				return true
 			end
 
-			logFarm("delivery: route finished")
-			return true
+			-- The opening run: shop, then out to the delivery area.
+			for index, waypoint in ipairs(DELIVERY_INTRO_WAYPOINTS) do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				local hopped, hopError = hopTo(waypoint, ("waypoint %d/%d"):format(index, #DELIVERY_INTRO_WAYPOINTS))
+				if not hopped then
+					return false, hopError
+				end
+			end
+
+			-- Then cycle the last two points until the farm is switched off.
+			logFarm("delivery: looping the final two waypoints until the farm is toggled off")
+			local lap = 0
+			while not isCancelled() do
+				lap += 1
+
+				for index, waypoint in ipairs(DELIVERY_LOOP_WAYPOINTS) do
+					if isCancelled() then
+						return false, "cancelled"
+					end
+
+					local hopped, hopError = hopTo(waypoint, ("lap %d, point %d"):format(lap, index))
+					if not hopped then
+						return false, hopError
+					end
+				end
+			end
+
+			return false, "cancelled"
 		end
 
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
@@ -1502,9 +1526,9 @@ function MSKen.init(_context)
 					setWKeyHeld(false)
 					setMovementOverrideActive(false)
 
-					if ok then
-						Library:Notify("Delivery Farm: route complete, taking the next job", 3)
-					elseif message ~= "cancelled" then
+					-- The route only ends on cancel or an error; on success it
+					-- runs its loop until the toggle goes off.
+					if not ok and message ~= "cancelled" then
 						logFarm("delivery stopped: " .. tostring(message))
 						Library:Notify("Delivery Farm: " .. tostring(message), 5)
 					end
