@@ -731,7 +731,9 @@ function MSKen.init(_context)
 
 			-- Fires the target's ClickDetector if the player is close enough.
 			-- Only returns false on cancellation; a skipped click is not fatal.
-			local function approachAndFire(target)
+			-- immediate skips the lead-in pause and pacing wait (used for the
+			-- Stock click, which starts the job and has nothing to pace after).
+			local function approachAndFire(target, immediate)
 				local root = getCharacterRoot()
 				local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
 
@@ -755,14 +757,16 @@ function MSKen.init(_context)
 					return true
 				end
 
-				-- Short human-like pause to line up the click, then hold until
-				-- the pacing limits allow another click.
-				if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
-					return false, "cancelled"
-				end
+				if not immediate then
+					-- Short human-like pause to line up the click, then hold
+					-- until the pacing limits allow another click.
+					if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
+						return false, "cancelled"
+					end
 
-				if not waitForFireSlot() then
-					return false, "cancelled"
+					if not waitForFireSlot() then
+						return false, "cancelled"
+					end
 				end
 
 				-- Stop moving and let go of the keys first: fire from a settled,
@@ -843,7 +847,8 @@ function MSKen.init(_context)
 					end
 				end
 
-				return approachAndFire(stockPart)
+				-- No lead-in pause here: the Stock click just starts the job.
+				return approachAndFire(stockPart, true)
 			end
 
 			-- The job: click the Stock box once, then keep following the trail
