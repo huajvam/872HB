@@ -17,6 +17,7 @@ local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 
 local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
 local JOBS_SCREEN_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen" }
+local HOME_SCREEN_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
 local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
 -- Any label under PlayerGui.Quests containing this text marks the restock job
@@ -1111,15 +1112,38 @@ function MSKen.init(_context)
 			logFarm("phone equipped; clicking phone container")
 			clickGuiElement(phoneContainer)
 
-			-- The phone may reopen on whichever screen it was left on. Only
-			-- press the Jobs button when it is actually on screen; clicking a
-			-- hidden element's coordinates hits whatever is really there.
-			if findVisibleGuiElement(JOBS_SCREEN_PATH) then
+			-- The jobs screen counts as open only when its accept button is on
+			-- screen, or when the jobs screen shows while the home screen does
+			-- not. Some screens stay Visible in the tree permanently, so the
+			-- accept button is the reliable signal.
+			local function isJobsScreenOpen()
+				if findVisibleGuiElement(ACCEPT_BUTTON_PATH) then
+					return true
+				end
+
+				return findVisibleGuiElement(JOBS_SCREEN_PATH) ~= nil
+					and findVisibleGuiElement(HOME_SCREEN_PATH) == nil
+			end
+
+			logFarm(("phone screens: home=%s jobs=%s accept=%s jobsButton=%s"):format(
+				tostring(findVisibleGuiElement(HOME_SCREEN_PATH) ~= nil),
+				tostring(findVisibleGuiElement(JOBS_SCREEN_PATH) ~= nil),
+				tostring(findVisibleGuiElement(ACCEPT_BUTTON_PATH) ~= nil),
+				tostring(findVisibleGuiElement(JOBS_BUTTON_PATH) ~= nil)))
+
+			if isJobsScreenOpen() then
 				logFarm("jobs screen is already open; skipping the jobs button")
 			else
 				local jobsButton = waitForVisibleGuiElement(JOBS_BUTTON_PATH, 5, isCancelled)
 				if not jobsButton then
-					return false, "Jobs button not visible on the phone"
+					-- Fall back to the element even if the visibility test says
+					-- otherwise, rather than not pressing anything at all.
+					jobsButton = findGuiElement(JOBS_BUTTON_PATH)
+					if not jobsButton then
+						return false, "Jobs button not found on the phone"
+					end
+
+					logFarm("jobs button reads as hidden; clicking it anyway")
 				end
 
 				task.wait(0.3)
@@ -1130,13 +1154,13 @@ function MSKen.init(_context)
 				-- Click it until the jobs screen actually opens, instead of
 				-- spamming blindly for a fixed time.
 				logFarm("opening the jobs screen")
-				local openDeadline = os.clock() + 5
+				local openDeadline = os.clock() + 6
 				while os.clock() < openDeadline do
 					if isCancelled() then
 						return false, "cancelled"
 					end
 
-					if findVisibleGuiElement(JOBS_SCREEN_PATH) then
+					if isJobsScreenOpen() then
 						break
 					end
 
@@ -1144,14 +1168,15 @@ function MSKen.init(_context)
 					task.wait(0.35)
 				end
 
-				if not findVisibleGuiElement(JOBS_SCREEN_PATH) then
+				if not isJobsScreenOpen() then
 					return false, "jobs screen did not open"
 				end
 			end
 
 			local acceptButton = waitForVisibleGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
+				or findGuiElement(ACCEPT_BUTTON_PATH)
 			if not acceptButton then
-				return false, "Accept button not visible on the jobs screen"
+				return false, "Accept button not found on the jobs screen"
 			end
 
 			task.wait(0.3)
