@@ -378,8 +378,8 @@ local function setMovementOverrideActive(active)
 	end
 end
 
-local function walkTo(position, isCancelled)
-	local deadline = os.clock() + 10
+local function walkTo(position, isCancelled, timeout)
+	local deadline = os.clock() + (timeout or 10)
 	local lastPosition = nil
 	local lastProgressAt = os.clock()
 	local stallReported = false
@@ -866,8 +866,17 @@ function MSKen.init(_context)
 				local root = getCharacterRoot()
 				local clickDistance = root and (target.Position - root.Position).Magnitude or math.huge
 
+				-- Only ever close a short gap in a straight line. Anything
+				-- longer has to come from the compass dots: walking straight at
+				-- a shelf from across the aisle just wedges into its wall.
 				if clickDistance > SUPER_CLOSE_RANGE then
-					walkTo(target.Position, isCancelled)
+					if clickDistance > 12 then
+						logFarm(("%s is %.1f studs away - too far to walk straight at; waiting for the trail"):format(
+							target.Name, clickDistance))
+						return true
+					end
+
+					walkTo(target.Position, isCancelled, 4)
 					setWKeyHeld(false)
 					setWalkTarget(nil)
 				end
@@ -1028,10 +1037,14 @@ function MSKen.init(_context)
 						logFarm("CompassPaths at timeout: " .. table.concat(contents, ", "))
 					end
 
-					local candidate = nearestUnfiredPartTo(nil)
-					if candidate then
-						logFarm(("no trail available; walking to the nearest unrestocked shelf (%d/12 done)"):format(bestProgress))
-						walkTo(candidate.Position, isCancelled)
+					-- With no dots to follow, only attempt a shelf that is close
+					-- enough for a straight walk to be safe; a long one just
+					-- ends up pinned against shelving.
+					local candidate, candidateDistance = nearestUnfiredPartTo(nil)
+					if candidate and candidateDistance <= 30 then
+						logFarm(("no trail available; walking to the nearest unrestocked shelf %.1f studs away (%d/12 done)"):format(
+							candidateDistance, bestProgress))
+						walkTo(candidate.Position, isCancelled, 8)
 						setWKeyHeld(false)
 						setWalkTarget(nil)
 
@@ -1040,6 +1053,11 @@ function MSKen.init(_context)
 						end
 
 						target = candidate
+					elseif candidate then
+						logFarm(("nearest unrestocked shelf is %.1f studs away with no trail; waiting for one"):format(candidateDistance))
+						if not sleepUnlessCancelled(1.5, isCancelled) then
+							return false, "cancelled"
+						end
 					end
 				end
 
@@ -1112,7 +1130,7 @@ function MSKen.init(_context)
 					end
 
 					logFarm(("walking straight to a leftover spot %.1f studs away"):format(bestDistance))
-					walkTo(best.Position, isCancelled)
+					walkTo(best.Position, isCancelled, 8)
 					setWKeyHeld(false)
 					setWalkTarget(nil)
 
