@@ -1388,25 +1388,11 @@ function MSKen.init(_context)
 				return false, acceptError
 			end
 
-			-- Give the job a moment to register, then confirm the game drew a
-			-- trail for it.
-			local trailIsUp = false
-			local deadline = os.clock() + 5
-			while os.clock() < deadline do
-				if isCancelled() then
-					return false, "cancelled"
-				end
-
-				if anyTrailHasDots() then
-					trailIsUp = true
-					break
-				end
-
-				task.wait(0.1)
-			end
-
-			if not trailIsUp then
-				return false, "no delivery trail appeared after accepting"
+			-- Let the accepted job register before moving. No compass check
+			-- here: those trails are restock specific, and waiting on one
+			-- stopped the delivery route from ever starting.
+			if not sleepUnlessCancelled(1, isCancelled) then
+				return false, "cancelled"
 			end
 
 			Library:Notify("Delivery job accepted", 3)
