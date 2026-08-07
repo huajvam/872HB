@@ -465,6 +465,42 @@ local function clickGuiElement(element, relativeX, relativeY)
 	VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
 end
 
+-- Clears a finished restock task off the tracker by pressing its Exit (X)
+-- button, so the leftover row cannot be mistaken for an active job on the
+-- next lap. The row index is not stable, so the restock row is found by its
+-- text rather than by position.
+local QUESTS_LIST_PATH = { "Quests", "Frame", "quests" }
+
+local function dismissRestockQuest()
+	local questsList = findGuiElement(QUESTS_LIST_PATH)
+	if not questsList then
+		return false
+	end
+
+	for _, row in ipairs(questsList:GetChildren()) do
+		local mentionsRestock = false
+		for _, descendant in ipairs(row:GetDescendants()) do
+			if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
+				and descendant.Text:lower():find("restock", 1, true) then
+				mentionsRestock = true
+				break
+			end
+		end
+
+		if mentionsRestock then
+			local exitButton = row:FindFirstChild("Exit", true)
+			if exitButton and exitButton:IsA("GuiObject") and isGuiElementVisible(exitButton) then
+				logFarm("clearing the finished restock task off the tracker")
+				clickGuiElement(exitButton)
+				task.wait(0.4)
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
 -- Reports the character's motion state at click time. No waiting: clicks fire
 -- the moment the shelf is in range, even while the player is still moving.
 local function describeCharacterState()
@@ -1096,6 +1132,10 @@ function MSKen.init(_context)
 					logFarm("sweep: no safe target this pass; retrying")
 				end
 			end
+
+			-- Dismiss the finished task so the tracker is clean before the next
+			-- job is picked up from the phone.
+			dismissRestockQuest()
 
 			-- Only a full 12/12 counts as a completed route; anything less is
 			-- reported as the failure it is, with the count it reached.
