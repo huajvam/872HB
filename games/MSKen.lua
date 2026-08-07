@@ -687,8 +687,8 @@ function MSKen.init(_context)
 			-- clicks. The anti-cheat is counting clicks per unit time, not
 			-- checking which shelf, so keep the cadence human.
 			-- Manual fast clicking never gets kicked, so speed itself is fine;
-			-- keep only a light gap so the cadence isn't machine-perfect.
-			local MIN_SECONDS_BETWEEN_FIRES = 2
+			-- keep only a token gap between clicks.
+			local MIN_SECONDS_BETWEEN_FIRES = 0.3
 			local MAX_FIRES_PER_WINDOW = 12
 			local FIRE_WINDOW_SECONDS = 30
 			local fireTimes = {}
@@ -758,9 +758,9 @@ function MSKen.init(_context)
 				end
 
 				if not immediate then
-					-- Short human-like pause to line up the click, then hold
-					-- until the pacing limits allow another click.
-					if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
+					-- Brief pause to line up the click, then hold until the
+					-- pacing limits allow another click.
+					if not sleepUnlessCancelled(randomRange(0.25, 0.4), isCancelled) then
 						return false, "cancelled"
 					end
 
