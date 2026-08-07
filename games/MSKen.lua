@@ -68,6 +68,37 @@ local function findGuiElement(pathParts)
 	return current
 end
 
+-- True when the element (or an ancestor) is the hidden prototype row the
+-- game clones for real quest entries. The template keeps whatever text was
+-- last written to it forever, so reading it makes finished jobs look active.
+local function isTemplateElement(element)
+	local current = element
+
+	while current and current ~= game do
+		if current.Name:lower() == "template" then
+			return true
+		end
+		current = current.Parent
+	end
+
+	return false
+end
+
+-- A GuiObject only renders when it and every ancestor are visible and its
+-- ScreenGui is enabled; hidden rows stay in the tree.
+local function isGuiElementVisible(element)
+	local current = element
+
+	while current and not current:IsA("ScreenGui") do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		current = current.Parent
+	end
+
+	return current ~= nil and current.Enabled == true
+end
+
 -- Finds the live quest entry (a visible clone of the template row) by
 -- scanning every label under PlayerGui.Quests for the restock text.
 local function findRestockQuestLabel()
@@ -81,7 +112,9 @@ local function findRestockQuestLabel()
 	-- match loosely: the "restock" word survives most frames, and the
 	-- "N / 12" counter form is a fallback when it doesn't.
 	for _, descendant in ipairs(questsGui:GetDescendants()) do
-		if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
+			and not isTemplateElement(descendant)
+			and isGuiElementVisible(descendant) then
 			local text = descendant.Text
 			if text:find(RESTOCK_QUEST_TEXT, 1, true)
 				or text:lower():find("restock", 1, true)
