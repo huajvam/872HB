@@ -17,7 +17,15 @@ local HUAJ_HUB_MSKEN_LIBRARY_KEY = "__huaj_hub_msken_library_v1"
 
 local PHONE_CONTAINER_PATH = { "Phone", "Container", "PhoneFrame", "Container" }
 local JOBS_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "HomeScreen", "img", "HomeFrame", "Jobs", "img" }
-local ACCEPT_BUTTON_PATH = { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", "1", "img", "accept" }
+-- Jobs are listed in numbered slots on the phone's jobs screen: slot 1 is the
+-- restock job, slot 3 is the delivery job.
+local function getAcceptButtonPath(slot)
+	return { "Phone", "Container", "PhoneFrame", "Container", "PhoneLabel", "JobsScreen", "img", "jobs", "scroll", tostring(slot), "img", "accept" }
+end
+
+local RESTOCK_JOB_SLOT = 1
+local DELIVERY_JOB_SLOT = 3
+local ACCEPT_BUTTON_PATH = getAcceptButtonPath(RESTOCK_JOB_SLOT)
 -- Any label under PlayerGui.Quests containing this text marks the restock job
 -- as active. Matched by scanning descendants because quest rows are cloned
 -- from a template at runtime, so their exact paths aren't stable.
@@ -1214,8 +1222,10 @@ function MSKen.init(_context)
 			return false, ("route ended at %d/12 restocks"):format(bestProgress)
 		end
 
-		local function runMoneyFarmSequence(isCancelled)
-			logFarm("sequence started")
+		-- Opens the phone, gets to the jobs screen and accepts the job in the
+		-- given slot. Shared by the restock and delivery farms.
+		local function acceptJobFromPhone(slot, isCancelled)
+			local acceptPath = getAcceptButtonPath(slot)
 
 			-- Equip the phone tool from the backpack if it isn't already in hand.
 			if not isPhoneEquipped() then
@@ -1273,7 +1283,7 @@ function MSKen.init(_context)
 					return false, "cancelled"
 				end
 
-				local accept = findGuiElement(ACCEPT_BUTTON_PATH)
+				local accept = findGuiElement(acceptPath)
 				if accept and isGuiElementVisible(accept) then
 					break
 				end
@@ -1282,17 +1292,28 @@ function MSKen.init(_context)
 				task.wait(0.25)
 			end
 
-			local acceptButton = waitForGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
+			local acceptButton = waitForGuiElement(acceptPath, 5, isCancelled)
 			if not acceptButton then
-				return false, "Accept button not found on the jobs screen"
+				return false, ("Accept button for job slot %d not found"):format(slot)
 			end
 
 			task.wait(0.3)
 			if isCancelled() then
 				return false, "cancelled"
 			end
-			logFarm("clicking the accept button")
+			logFarm(("clicking accept on job slot %d"):format(slot))
 			clickGuiElement(acceptButton)
+
+			return true
+		end
+
+		local function runMoneyFarmSequence(isCancelled)
+			logFarm("sequence started")
+
+			local accepted, acceptError = acceptJobFromPhone(RESTOCK_JOB_SLOT, isCancelled)
+			if not accepted then
+				return false, acceptError
+			end
 
 			-- Verify the restock job is active: either the quest tracker shows
 			-- the restock text, or the game has drawn the stocker compass trail
@@ -1332,10 +1353,94 @@ function MSKen.init(_context)
 			return runRestockRoute(isCancelled)
 		end
 
+		local function runDeliverySequence(isCancelled)
+			logFarm("delivery: sequence started")
+
+			local accepted, acceptError = acceptJobFromPhone(DELIVERY_JOB_SLOT, isCancelled)
+			if not accepted then
+				return false, acceptError
+			end
+
+			-- Give the job a moment to register, then confirm the game drew a
+			-- trail for it.
+			local trailIsUp = false
+			local deadline = os.clock() + 5
+			while os.clock() < deadline do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				if anyTrailHasDots() then
+					trailIsUp = true
+					break
+				end
+
+				task.wait(0.1)
+			end
+
+			if not trailIsUp then
+				return false, "no delivery trail appeared after accepting"
+			end
+
+			Library:Notify("Delivery job accepted", 3)
+
+			local putAway = unequipAllTools()
+			if putAway then
+				logFarm("delivery: put away the " .. putAway)
+				task.wait(0.4)
+			end
+
+			return true
+		end
+
 		moneyFarmGroup:AddToggle("MoneyFarmEnabled", {
-			Text = "Farm",
+			Text = "Restock Farm",
 			Default = false,
 		})
+
+		moneyFarmGroup:AddToggle("DeliveryFarmEnabled", {
+			Text = "Delivery Farm",
+			Default = false,
+		})
+
+		Toggles.DeliveryFarmEnabled:OnChanged(function(enabled)
+			runtimeState.moneyFarmToken += 1
+			local token = runtimeState.moneyFarmToken
+
+			if not enabled then
+				return
+			end
+
+			-- The two farms drive the same character, so only one at a time.
+			if Toggles.MoneyFarmEnabled.Value then
+				Toggles.MoneyFarmEnabled:SetValue(false)
+			end
+
+			task.spawn(function()
+				local function isCancelled()
+					return token ~= runtimeState.moneyFarmToken or not Toggles.DeliveryFarmEnabled.Value
+				end
+
+				while not isCancelled() do
+					local ok, message = runDeliverySequence(isCancelled)
+					setWKeyHeld(false)
+					setMovementOverrideActive(false)
+
+					if not ok and message ~= "cancelled" then
+						logFarm("delivery stopped: " .. tostring(message))
+						Library:Notify("Delivery Farm: " .. tostring(message), 5)
+					end
+
+					if isCancelled() then
+						break
+					end
+
+					if not sleepUnlessCancelled(randomRange(3, 6), isCancelled) then
+						break
+					end
+				end
+			end)
+		end)
 
 		Toggles.MoneyFarmEnabled:OnChanged(function(enabled)
 			runtimeState.moneyFarmToken += 1
@@ -1343,6 +1448,11 @@ function MSKen.init(_context)
 
 			if not enabled then
 				return
+			end
+
+			-- The two farms drive the same character, so only one at a time.
+			if Toggles.DeliveryFarmEnabled.Value then
+				Toggles.DeliveryFarmEnabled:SetValue(false)
 			end
 
 			task.spawn(function()
