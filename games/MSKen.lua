@@ -634,6 +634,12 @@ function MSKen.init(_context)
 					return true
 				end
 
+				-- Cheap outs first, so a mid-animation label never costs time:
+				-- a readable tracker or any drawn trail means work remains.
+				if findRestockQuestLabel() or anyTrailHasDots() then
+					return false
+				end
+
 				local deadline = os.clock() + 4
 				while os.clock() < deadline do
 					if isCancelled() then
@@ -851,7 +857,7 @@ function MSKen.init(_context)
 				-- redraw is missed, fall back to any trail that still has dots
 				-- rather than abandoning the job.
 				local trailFolder = nil
-				local freshDeadline = os.clock() + 5
+				local freshDeadline = os.clock() + 1.5
 				local trailDeadline = os.clock() + 10
 				while os.clock() < trailDeadline do
 					if isCancelled() then
