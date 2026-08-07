@@ -31,6 +31,22 @@ local ACCEPT_BUTTON_PATH = getAcceptButtonPath(RESTOCK_JOB_SLOT)
 -- from a template at runtime, so their exact paths aren't stable.
 local RESTOCK_QUEST_TEXT = "You still need to restock"
 
+-- Delivery route waypoints, teleported through in order: the shop, each drop
+-- off, and finally back to the shop before the next job is taken.
+local DELIVERY_ROUTE = {
+	CFrame.new(140.826431, 4.04428768, 77.9906464, -0.999805689, 5.95979444e-09, -0.019713087, 6.71388101e-09, 1, -3.81869043e-08, 0.019713087, -3.83118319e-08, -0.999805689),
+	CFrame.new(158.564713, 1.50003231, 89.5151978, 1, 0, 0, 0, 1, 0, 0, 0, 1),
+	CFrame.new(-719.91272, 1.49971616, -179.245575, 1, 0, 0, 0, 1, 0, 0, 0, 1),
+	CFrame.new(-41.7301788, 1.49793923, -235.875366, -0.699219465, 0.0016660376, -0.714905262, -7.47049926e-05, 0.999997079, 0.00240349071, 0.714907169, 0.0017339742, -0.699217319),
+	CFrame.new(-438.138367, 1.39754319, -772.952698, 1, 0, 0, 0, 1, 0, 0, 0, 1),
+	CFrame.new(-139.964081, 1.50791931, -325.238983, 1, -0, 0, 0, 0.999998629, 0.00164011808, -0, -0.00164011808, 0.999998629),
+	CFrame.new(158.564713, 1.50003231, 89.5151978, 1, 0, 0, 0, 1, 0, 0, 0, 1),
+	CFrame.new(140.826431, 4.04428768, 77.9906464, -0.999805689, 5.95979444e-09, -0.019713087, 6.71388101e-09, 1, -3.81869043e-08, 0.019713087, -3.83118319e-08, -0.999805689),
+}
+
+-- How long to stand at each waypoint before moving to the next.
+local DELIVERY_WAYPOINT_DWELL = 2
+
 -- The game draws trails of numbered dots (Dot_1, Dot_2, ...) guiding the
 -- player to each job objective: Path_Stocker leads to the Stock box, then
 -- Path_Stocker_1 .. Path_Stocker_12 lead to the individual restock spots.
@@ -237,6 +253,17 @@ end
 local function getCharacterRoot()
 	local character = LocalPlayer and LocalPlayer.Character
 	return character and character:FindFirstChild("HumanoidRootPart") or nil
+end
+
+local function teleportTo(targetCFrame)
+	local root = getCharacterRoot()
+	if not root then
+		return false
+	end
+
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.CFrame = targetCFrame
+	return true
 end
 
 local function getDotPosition(instance)
@@ -1390,6 +1417,27 @@ function MSKen.init(_context)
 				task.wait(0.4)
 			end
 
+			-- Teleport through the delivery route in order; the last waypoint
+			-- puts the player back at the shop for the next job.
+			for index, waypoint in ipairs(DELIVERY_ROUTE) do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				if not teleportTo(waypoint) then
+					return false, "no character to teleport"
+				end
+
+				local position = waypoint.Position
+				logFarm(("delivery: waypoint %d/%d (%.1f, %.1f, %.1f)"):format(
+					index, #DELIVERY_ROUTE, position.X, position.Y, position.Z))
+
+				if not sleepUnlessCancelled(DELIVERY_WAYPOINT_DWELL, isCancelled) then
+					return false, "cancelled"
+				end
+			end
+
+			logFarm("delivery: route finished")
 			return true
 		end
 
@@ -1426,7 +1474,9 @@ function MSKen.init(_context)
 					setWKeyHeld(false)
 					setMovementOverrideActive(false)
 
-					if not ok and message ~= "cancelled" then
+					if ok then
+						Library:Notify("Delivery Farm: route complete, taking the next job", 3)
+					elseif message ~= "cancelled" then
 						logFarm("delivery stopped: " .. tostring(message))
 						Library:Notify("Delivery Farm: " .. tostring(message), 5)
 					end
