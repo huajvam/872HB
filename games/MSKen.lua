@@ -31,6 +31,10 @@ local ACCEPT_BUTTON_PATH = getAcceptButtonPath(RESTOCK_JOB_SLOT)
 -- from a template at runtime, so their exact paths aren't stable.
 local RESTOCK_QUEST_TEXT = "You still need to restock"
 
+-- The delivery job's tracker line reads:
+-- "Pickup & Deliver the package to the customer's location!"
+local DELIVERY_QUEST_TEXT = "Deliver the package"
+
 -- Delivery route waypoints, teleported through in order: the shop, each drop
 -- off, and finally back to the shop before the next job is taken.
 local DELIVERY_ROUTE = {
@@ -138,6 +142,27 @@ local function getRestockProgress()
 	end
 
 	return visibleBest or anyBest
+end
+
+-- Finds the delivery job's row on the quest tracker.
+local function findDeliveryQuestLabel()
+	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local questsGui = playerGui and playerGui:FindFirstChild("Quests")
+	if not questsGui then
+		return nil
+	end
+
+	for _, descendant in ipairs(questsGui:GetDescendants()) do
+		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) then
+			local text = descendant.Text
+			if text:find(DELIVERY_QUEST_TEXT, 1, true)
+				or text:lower():find("deliver the package", 1, true) then
+				return descendant
+			end
+		end
+	end
+
+	return nil
 end
 
 -- Finds a quest row showing the restock text. Quest rows are clones of a
@@ -1388,11 +1413,28 @@ function MSKen.init(_context)
 				return false, acceptError
 			end
 
-			-- Let the accepted job register before moving. No compass check
-			-- here: those trails are restock specific, and waiting on one
-			-- stopped the delivery route from ever starting.
-			if not sleepUnlessCancelled(1, isCancelled) then
-				return false, "cancelled"
+			-- Confirm the delivery job is on the tracker, but never block on it:
+			-- the route runs either way, so a detection miss cannot stop the
+			-- teleports from happening.
+			local questLabel = nil
+			local deadline = os.clock() + 4
+			while os.clock() < deadline do
+				if isCancelled() then
+					return false, "cancelled"
+				end
+
+				questLabel = findDeliveryQuestLabel()
+				if questLabel then
+					break
+				end
+
+				task.wait(0.1)
+			end
+
+			if questLabel then
+				logFarm(("delivery job confirmed: %q"):format(questLabel.Text))
+			else
+				logFarm("delivery quest text not found; running the route anyway")
 			end
 
 			Library:Notify("Delivery job accepted", 3)
