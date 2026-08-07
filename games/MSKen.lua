@@ -471,31 +471,65 @@ end
 -- text rather than by position.
 local QUESTS_LIST_PATH = { "Quests", "Frame", "quests" }
 
-local function dismissRestockQuest()
-	local questsList = findGuiElement(QUESTS_LIST_PATH)
-	if not questsList then
-		return false
+-- A live Exit button carries an _ExitAnimPivot child; rows without it are
+-- not actually pressable, so that marker is what makes it safe to click.
+local function findPressableExitButton(row)
+	for _, descendant in ipairs(row:GetDescendants()) do
+		if descendant.Name == "Exit"
+			and descendant:IsA("GuiObject")
+			and descendant:FindFirstChild("_ExitAnimPivot") then
+			return descendant
+		end
 	end
 
-	for _, row in ipairs(questsList:GetChildren()) do
-		local mentionsRestock = false
-		for _, descendant in ipairs(row:GetDescendants()) do
-			if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
-				and descendant.Text:lower():find("restock", 1, true) then
-				mentionsRestock = true
-				break
+	return nil
+end
+
+local function rowMentionsRestock(row)
+	for _, descendant in ipairs(row:GetDescendants()) do
+		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
+			and descendant.Text:lower():find("restock", 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function dismissRestockQuest()
+	-- Retry a few times: the row animates out, and a click during the
+	-- animation can be swallowed.
+	for attempt = 1, 3 do
+		local questsList = findGuiElement(QUESTS_LIST_PATH)
+		if not questsList then
+			return false
+		end
+
+		local exitButton = nil
+		for _, row in ipairs(questsList:GetChildren()) do
+			if rowMentionsRestock(row) then
+				exitButton = findPressableExitButton(row)
+				if exitButton then
+					break
+				end
 			end
 		end
 
-		if mentionsRestock then
-			local exitButton = row:FindFirstChild("Exit", true)
-			if exitButton and exitButton:IsA("GuiObject") and isGuiElementVisible(exitButton) then
-				logFarm("clearing the finished restock task off the tracker")
-				clickGuiElement(exitButton)
-				task.wait(0.4)
-				return true
+		if not exitButton then
+			if attempt == 1 then
+				return false
 			end
+
+			logFarm("restock task cleared off the tracker")
+			return true
 		end
+
+		if isGuiElementVisible(exitButton) then
+			logFarm("pressing Exit to clear the finished restock task")
+			clickGuiElement(exitButton)
+		end
+
+		task.wait(0.5)
 	end
 
 	return false
