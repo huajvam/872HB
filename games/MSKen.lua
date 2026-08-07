@@ -649,12 +649,36 @@ function MSKen.init(_context)
 			local pendingProgressCheck = nil
 			local lastFiredTarget = nil
 
+			-- Guards against a job that can never finish: the tracker sometimes
+			-- keeps a stale "0 / 12" row on screen after a job ends, which
+			-- otherwise keeps the route grinding through every retry.
+			local routeStartedAt = os.clock()
+			local lastProgressAt = os.clock()
+			local ROUTE_TIME_LIMIT = 180
+			local STALL_LIMIT = 25
+
 			local function noteProgress()
 				local progress = getQuestProgress()
 				if progress and progress > bestProgress then
 					bestProgress = progress
+					lastProgressAt = os.clock()
 				end
 				return bestProgress
+			end
+
+			-- True when the route should stop and let a fresh job be accepted.
+			local function routeShouldGiveUp()
+				if os.clock() - routeStartedAt > ROUTE_TIME_LIMIT then
+					logFarm(("route hit its %ds time limit at %d/12; starting over"):format(ROUTE_TIME_LIMIT, bestProgress))
+					return true
+				end
+
+				if os.clock() - lastProgressAt > STALL_LIMIT and not anyTrailHasDots() then
+					logFarm(("no progress for %ds and no trails drawn (%d/12); starting over"):format(STALL_LIMIT, bestProgress))
+					return true
+				end
+
+				return false
 			end
 
 			local function reportProgress()
@@ -904,7 +928,7 @@ function MSKen.init(_context)
 
 				reportProgress()
 
-				if jobIsFinished() then
+				if jobIsFinished() or routeShouldGiveUp() then
 					break
 				end
 
@@ -1002,7 +1026,7 @@ function MSKen.init(_context)
 
 				reportProgress()
 
-				if jobIsFinished() then
+				if jobIsFinished() or routeShouldGiveUp() then
 					break
 				end
 
@@ -1130,16 +1154,24 @@ function MSKen.init(_context)
 			if isCancelled() then
 				return false, "cancelled"
 			end
-			logFarm("clicking the job frame for 3 seconds")
-			-- Click the job frame repeatedly for 3 seconds to make sure it registers,
-			-- then move on to the accept button.
-			local clickDeadline = os.clock() + 3
+			-- Click the job frame until the accept button is actually on screen
+			-- (up to 4s), rather than spamming a fixed 3 seconds. On later laps
+			-- the phone often reopens straight onto the jobs screen, where more
+			-- clicks on this spot land on whatever is really there.
+			logFarm("opening the jobs screen")
+			local clickDeadline = os.clock() + 4
 			while os.clock() < clickDeadline do
 				if isCancelled() then
 					return false, "cancelled"
 				end
+
+				local accept = findGuiElement(ACCEPT_BUTTON_PATH)
+				if accept and isGuiElementVisible(accept) then
+					break
+				end
+
 				clickGuiElement(jobsButton, 0.75, 0.5)
-				task.wait(0.15)
+				task.wait(0.25)
 			end
 
 			local acceptButton = waitForGuiElement(ACCEPT_BUTTON_PATH, 5, isCancelled)
