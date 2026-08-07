@@ -68,22 +68,6 @@ local function findGuiElement(pathParts)
 	return current
 end
 
--- True when the element (or an ancestor) is the hidden prototype row the
--- game clones for real quest entries. The template keeps whatever text was
--- last written to it forever, so reading it makes finished jobs look active.
-local function isTemplateElement(element)
-	local current = element
-
-	while current and current ~= game do
-		if current.Name:lower() == "template" then
-			return true
-		end
-		current = current.Parent
-	end
-
-	return false
-end
-
 -- A GuiObject only renders when it and every ancestor are visible and its
 -- ScreenGui is enabled; hidden rows stay in the tree.
 local function isGuiElementVisible(element)
@@ -99,9 +83,11 @@ local function isGuiElementVisible(element)
 	return current ~= nil and current.Enabled == true
 end
 
--- Finds the live quest entry (a visible clone of the template row) by
--- scanning every label under PlayerGui.Quests for the restock text.
-local function findRestockQuestLabel()
+-- Finds a quest row showing the restock text. Quest rows are clones of a
+-- template row and keep that name, so they cannot be told apart by name -
+-- only by whether they are actually rendered. requireVisible = true asks
+-- "is the job on screen right now", false just reads whatever text exists.
+local function findRestockQuestLabel(requireVisible)
 	local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
 	local questsGui = playerGui and playerGui:FindFirstChild("Quests")
 	if not questsGui then
@@ -113,8 +99,7 @@ local function findRestockQuestLabel()
 	-- "N / 12" counter form is a fallback when it doesn't.
 	for _, descendant in ipairs(questsGui:GetDescendants()) do
 		if (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
-			and not isTemplateElement(descendant)
-			and isGuiElementVisible(descendant) then
+			and (not requireVisible or isGuiElementVisible(descendant)) then
 			local text = descendant.Text
 			if text:find(RESTOCK_QUEST_TEXT, 1, true)
 				or text:lower():find("restock", 1, true)
@@ -622,7 +607,9 @@ function MSKen.init(_context)
 			end
 
 			local function getQuestProgress()
-				local label = findRestockQuestLabel()
+				-- Read the counter from any matching row, visible or not: the
+				-- text is what matters here, not whether it is on screen.
+				local label = findRestockQuestLabel(false)
 				local done = label and label.Text:match("(%d+)%s*/")
 				return tonumber(done)
 			end
@@ -668,8 +655,8 @@ function MSKen.init(_context)
 				end
 
 				-- Cheap outs first, so a mid-animation label never costs time:
-				-- a readable tracker or any drawn trail means work remains.
-				if findRestockQuestLabel() or anyTrailHasDots() then
+				-- a tracker row on screen or any drawn trail means work remains.
+				if findRestockQuestLabel(true) or anyTrailHasDots() then
 					return false
 				end
 
@@ -679,7 +666,7 @@ function MSKen.init(_context)
 						return false
 					end
 
-					if findRestockQuestLabel() then
+					if findRestockQuestLabel(true) then
 						return false
 					end
 
