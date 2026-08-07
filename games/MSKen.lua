@@ -597,12 +597,32 @@ function MSKen.init(_context)
 			-- Highest restock count the server has confirmed this job.
 			local bestProgress = 0
 
+			-- Counter value from just before the last click, checked on the
+			-- next cycle so the player never stands around waiting for it.
+			local pendingProgressCheck = nil
+
 			local function noteProgress()
 				local progress = getQuestProgress()
 				if progress and progress > bestProgress then
 					bestProgress = progress
 				end
 				return bestProgress
+			end
+
+			local function reportProgress()
+				if pendingProgressCheck == nil then
+					noteProgress()
+					return
+				end
+
+				local progressNow = getQuestProgress()
+				if progressNow and progressNow > pendingProgressCheck then
+					logFarm(("server counted the restock (%d/12)"):format(noteProgress()))
+				elseif progressNow then
+					logFarm(("counter still at %d/12 after the last click - it may have been rejected"):format(progressNow))
+				end
+
+				pendingProgressCheck = nil
 			end
 
 			-- The job is only finished once 12 restocks are counted, or the
@@ -678,9 +698,6 @@ function MSKen.init(_context)
 			-- Manual fast clicking never gets kicked, so speed itself is fine;
 			-- keep only a token gap between clicks.
 			local MIN_SECONDS_BETWEEN_FIRES = 0.3
-			-- Bounds how long to wait for the server to count a restock before
-			-- moving on; the walk to the next shelf starts as soon as it does.
-			local COUNT_WAIT_SECONDS = 3
 			local MAX_FIRES_PER_WINDOW = 12
 			local FIRE_WINDOW_SECONDS = 30
 			local fireTimes = {}
@@ -772,36 +789,10 @@ function MSKen.init(_context)
 				firedParts[target] = true
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
-				if target.Name == "Stock" then
-					return true
-				end
-
-				-- For spot clicks, wait until the server actually counts the
-				-- restock, then move on immediately.
-				if progressBefore ~= nil then
-					local counted = false
-					local countDeadline = os.clock() + COUNT_WAIT_SECONDS
-					while os.clock() < countDeadline do
-						if isCancelled() then
-							return false, "cancelled"
-						end
-
-						local progressNow = getQuestProgress()
-						if progressNow and progressNow > progressBefore then
-							counted = true
-							break
-						end
-
-						task.wait(0.1)
-					end
-
-					if counted then
-						logFarm(("server counted the restock (%d/12)"):format(noteProgress()))
-					else
-						logFarm("quest counter did NOT increase after that fire - the server rejected it")
-					end
-				end
-
+				-- Do not wait around for the server to confirm: head for the
+				-- next shelf right away. The count is picked up on the next
+				-- cycle by reportProgress().
+				pendingProgressCheck = progressBefore
 				return true
 			end
 
@@ -849,6 +840,8 @@ function MSKen.init(_context)
 				if isCancelled() then
 					return false, "cancelled"
 				end
+
+				reportProgress()
 
 				if jobIsFinished() then
 					break
@@ -945,6 +938,8 @@ function MSKen.init(_context)
 				if isCancelled() then
 					return false, "cancelled"
 				end
+
+				reportProgress()
 
 				if jobIsFinished() then
 					break
