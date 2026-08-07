@@ -496,38 +496,54 @@ local function rowMentionsRestock(row)
 	return false
 end
 
+local function moveMouseToGuiElement(element)
+	local inset = GuiService:GetGuiInset()
+	local x = element.AbsolutePosition.X + element.AbsoluteSize.X * 0.5 + inset.X
+	local y = element.AbsolutePosition.Y + element.AbsoluteSize.Y * 0.5 + inset.Y
+	VirtualInputManager:SendMouseMoveEvent(x, y, game)
+end
+
 local function dismissRestockQuest()
 	-- Retry a few times: the row animates out, and a click during the
 	-- animation can be swallowed.
-	for attempt = 1, 3 do
+	for attempt = 1, 4 do
 		local questsList = findGuiElement(QUESTS_LIST_PATH)
 		if not questsList then
+			logFarm("quest list not found; cannot clear the task")
 			return false
 		end
 
-		local exitButton = nil
+		local exitButton, questRow = nil, nil
 		for _, row in ipairs(questsList:GetChildren()) do
 			if rowMentionsRestock(row) then
 				exitButton = findPressableExitButton(row)
 				if exitButton then
+					questRow = row
 					break
 				end
 			end
 		end
 
 		if not exitButton then
-			if attempt == 1 then
-				return false
+			if attempt > 1 then
+				logFarm("restock task cleared off the tracker")
+				return true
 			end
 
-			logFarm("restock task cleared off the tracker")
-			return true
+			logFarm("no restock row with a pressable Exit found")
+			return false
 		end
 
-		if isGuiElementVisible(exitButton) then
-			logFarm("pressing Exit to clear the finished restock task")
-			clickGuiElement(exitButton)
-		end
+		-- The X is typically revealed on hover, so hover the row and then the
+		-- button before pressing, and click whether or not it reports visible.
+		logFarm(("pressing Exit on %s (visible=%s)"):format(
+			exitButton:GetFullName(), tostring(isGuiElementVisible(exitButton))))
+
+		moveMouseToGuiElement(questRow)
+		task.wait(0.2)
+		moveMouseToGuiElement(exitButton)
+		task.wait(0.2)
+		clickGuiElement(exitButton)
 
 		task.wait(0.5)
 	end
