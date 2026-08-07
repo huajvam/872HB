@@ -580,6 +580,51 @@ function MSKen.init(_context)
 			-- Only a part the player is basically standing on gets fired.
 			local SUPER_CLOSE_RANGE = 4
 
+			-- Click pacing. Every kicked run fired 4+ detectors inside ~20s;
+			-- the one run that never earned an invalid click had 8-12s between
+			-- clicks. The anti-cheat is counting clicks per unit time, not
+			-- checking which shelf, so keep the cadence human.
+			local MIN_SECONDS_BETWEEN_FIRES = 9
+			local MAX_FIRES_PER_WINDOW = 3
+			local FIRE_WINDOW_SECONDS = 45
+			local fireTimes = {}
+
+			-- Blocks until firing again is within the pacing limits.
+			local function waitForFireSlot()
+				while true do
+					local now = os.clock()
+
+					-- Drop timestamps that have aged out of the window.
+					for i = #fireTimes, 1, -1 do
+						if now - fireTimes[i] > FIRE_WINDOW_SECONDS then
+							table.remove(fireTimes, i)
+						end
+					end
+
+					local waitFor = 0
+
+					local lastFire = fireTimes[#fireTimes]
+					if lastFire then
+						waitFor = math.max(waitFor, MIN_SECONDS_BETWEEN_FIRES - (now - lastFire))
+					end
+
+					if #fireTimes >= MAX_FIRES_PER_WINDOW then
+						waitFor = math.max(waitFor, FIRE_WINDOW_SECONDS - (now - fireTimes[1]))
+					end
+
+					if waitFor <= 0 then
+						return true
+					end
+
+					logFarm(("pacing: waiting %.1fs before the next click (%d fired in the last %ds)"):format(
+						waitFor, #fireTimes, FIRE_WINDOW_SECONDS))
+
+					if not sleepUnlessCancelled(waitFor, isCancelled) then
+						return false
+					end
+				end
+			end
+
 			-- Fires the target's ClickDetector if the player is close enough.
 			-- Only returns false on cancellation; a skipped click is not fatal.
 			local function approachAndFire(target)
@@ -606,8 +651,13 @@ function MSKen.init(_context)
 					return true
 				end
 
-				-- Short human-like pause to line up the click.
+				-- Short human-like pause to line up the click, then hold until
+				-- the pacing limits allow another click.
 				if not sleepUnlessCancelled(randomRange(1.2, 2.4), isCancelled) then
+					return false, "cancelled"
+				end
+
+				if not waitForFireSlot() then
 					return false, "cancelled"
 				end
 
@@ -618,6 +668,8 @@ function MSKen.init(_context)
 				local progressBefore = getQuestProgress()
 				snapshotTrailDots()
 				firedParts[target] = true
+				table.insert(fireTimes, os.clock())
+				-- Exactly one detector per call, and never one already fired.
 				fireclickdetector(target:FindFirstChildOfClass("ClickDetector"))
 
 				if target.Name == "Stock" then
