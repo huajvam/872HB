@@ -414,25 +414,14 @@ local function clickGuiElement(element, relativeX, relativeY)
 	VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
 end
 
--- Brings the character to a complete stop and reports its state, so a click
--- happens from a settled, standing player the way a manual one does.
-local function settleBeforeClick()
+-- Reports the character's motion state at click time. No waiting: clicks fire
+-- the moment the shelf is in range, even while the player is still moving.
+local function describeCharacterState()
 	local character = LocalPlayer and LocalPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local root = getCharacterRoot()
 	if not humanoid or not root then
 		return "no character"
-	end
-
-	humanoid:Move(Vector3.zero, false)
-
-	-- Wait for the character to actually stop drifting.
-	local deadline = os.clock() + 1.5
-	while os.clock() < deadline do
-		if root.AssemblyLinearVelocity.Magnitude < 1 then
-			break
-		end
-		task.wait(0.1)
 	end
 
 	return ("velocity=%.1f state=%s moveDir=%.1f"):format(
@@ -689,6 +678,9 @@ function MSKen.init(_context)
 			-- Manual fast clicking never gets kicked, so speed itself is fine;
 			-- keep only a token gap between clicks.
 			local MIN_SECONDS_BETWEEN_FIRES = 0.3
+			-- Bounds how long to wait for the server to count a restock before
+			-- moving on; the walk to the next shelf starts as soon as it does.
+			local COUNT_WAIT_SECONDS = 3
 			local MAX_FIRES_PER_WINDOW = 12
 			local FIRE_WINDOW_SECONDS = 30
 			local fireTimes = {}
@@ -757,23 +749,16 @@ function MSKen.init(_context)
 					return true
 				end
 
-				if not immediate then
-					-- Brief pause to line up the click, then hold until the
-					-- pacing limits allow another click.
-					if not sleepUnlessCancelled(randomRange(0.25, 0.4), isCancelled) then
-						return false, "cancelled"
-					end
-
-					if not waitForFireSlot() then
-						return false, "cancelled"
-					end
+				if not immediate and not waitForFireSlot() then
+					return false, "cancelled"
 				end
 
-				-- Stop moving and let go of the keys first: fire from a settled,
-				-- standing character, exactly like a manual Dex click.
+				-- Release the run key so the character does not keep sprinting
+				-- past the shelf, but do not wait for it to come to a stop -
+				-- the click goes out immediately.
 				setWKeyHeld(false)
 				setWalkTarget(nil)
-				local characterState = settleBeforeClick()
+				local characterState = describeCharacterState()
 
 				local questLabel = findRestockQuestLabel()
 				logFarm(("quest before fire: %s"):format(questLabel and questLabel.Text or "<no label>"))
@@ -795,7 +780,7 @@ function MSKen.init(_context)
 				-- restock, then move on immediately.
 				if progressBefore ~= nil then
 					local counted = false
-					local countDeadline = os.clock() + 6
+					local countDeadline = os.clock() + COUNT_WAIT_SECONDS
 					while os.clock() < countDeadline do
 						if isCancelled() then
 							return false, "cancelled"
@@ -807,7 +792,7 @@ function MSKen.init(_context)
 							break
 						end
 
-						task.wait(0.15)
+						task.wait(0.1)
 					end
 
 					if counted then
